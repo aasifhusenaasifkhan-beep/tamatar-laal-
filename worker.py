@@ -23,7 +23,18 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.strip()]
 
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
-print(f"KEYS RECEIVED: {len(GEMINI_KEYS)}")
+print(f"KEYS RECEIVED FROM HF DB: {len(GEMINI_KEYS)}")
+
+# 👇 NAYA CHECK (Taki Invalid Token pe sidha reason bata de) 👇
+if not BOT_TOKEN or len(BOT_TOKEN) < 10:
+    print("❌ CRITICAL ERROR: BOT_TOKEN is missing or invalid in GitHub Secrets!")
+    sys.exit(1)
+if not API_ID or API_ID == 0:
+    print("❌ CRITICAL ERROR: API_ID is missing in GitHub Secrets!")
+    sys.exit(1)
+if not API_HASH:
+    print("❌ CRITICAL ERROR: API_HASH is missing in GitHub Secrets!")
+    sys.exit(1)
 
 LIMIT_KEYWORDS = ["429", "rate limit", "quota", "limit exceeded", "resource exhausted", "too many requests", "billing", "free quota", "missingapikey"]
 
@@ -37,7 +48,7 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
 
     if not GEMINI_KEYS:
-        return False, "Failed", "No API left, please add new API using /addapi."
+        return False, "Failed", "No API left in Database, please add using /addapi."
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
@@ -45,12 +56,10 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     for idx, api_key in enumerate(GEMINI_KEYS):
         print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
         
-        # Reset Env for clean slate
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
 
-        # Gemini API Proxy Set (Accepts AQ and AIza both smoothly)
         os.environ["OPENAI_API_KEY"] = api_key
         os.environ["OPENAI_API_BASE"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
         os.environ["OPENAI_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
