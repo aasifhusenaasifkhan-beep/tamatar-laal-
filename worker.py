@@ -48,7 +48,7 @@ def mask_key(key):
     return f"...{key[-4:]}" if len(key) > 6 else "***"
 
 # =================================================================
-# 🚀 NATIVE GEMINI ADAPTER (BYPASSES GOOGLE OPENAI 404 ERROR)
+# 🚀 NATIVE GEMINI ADAPTER + AUTO MODEL FINDER (THE ULTIMATE FIX)
 # =================================================================
 PROXY_PORT = 11434
 CURRENT_GEMINI_KEY = ""
@@ -57,7 +57,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass # Logs hide karega
 
-    # Agar library check kare models
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
@@ -68,7 +67,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         }
         self.wfile.write(json.dumps(mock_data).encode('utf-8'))
 
-    # Request intercept aur Native format me convert
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
@@ -81,14 +79,12 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             system_text = ""
             user_text = ""
             
-            # OpenAI message structure to Gemini structure
             for msg in messages:
                 if msg.get('role') == 'system':
                     system_text += msg.get('content', '') + "\n"
                 else:
                     user_text += msg.get('content', '') + "\n"
             
-            # OFFICIAL NATIVE GEMINI FORMAT (NO OPENAI WRAPPER)
             gemini_payload = {
                 "contents": [{"role": "user", "parts": [{"text": user_text}]}],
                 "generationConfig": {"temperature": temperature}
@@ -98,45 +94,69 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             
             gemini_body = json.dumps(gemini_payload).encode('utf-8')
             
-            # NATIVE ENDPOINT CALL
-            url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={CURRENT_GEMINI_KEY}'
-            req = urllib.request.Request(url, data=gemini_body, method='POST')
-            req.add_header('Content-Type', 'application/json')
+            # 💡 SMART FALLBACK: Google API Models! Try them sequentially until one hits!
+            models_to_try = [
+                "gemini-1.5-flash-latest", 
+                "gemini-2.0-flash", 
+                "gemini-2.5-flash",
+                "gemini-1.5-pro-latest",
+                "gemini-1.5-flash"
+            ]
             
-            with urllib.request.urlopen(req) as response:
-                resp_body = response.read()
-                gemini_resp = json.loads(resp_body)
+            gemini_resp = None
+            last_err_body = None
+            last_code = 500
+            
+            # Yaha Loop Try karega Models ko 1 by 1 bina user ko Error dikhaye
+            for model_name in models_to_try:
+                url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={CURRENT_GEMINI_KEY}'
+                req = urllib.request.Request(url, data=gemini_body, method='POST')
+                req.add_header('Content-Type', 'application/json')
                 
                 try:
-                    translated_text = gemini_resp['candidates'][0]['content']['parts'][0]['text']
-                except (KeyError, IndexError):
-                    translated_text = ""
-                
-                # REPACK TO OPENAI FORMAT FOR THE LIBRARY
-                openai_resp = {
-                    "id": "chatcmpl-native-gemini",
-                    "object": "chat.completion",
-                    "created": 1234567890,
-                    "model": "gpt-3.5-turbo",
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": translated_text},
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
-                }
-                
-                final_resp_body = json.dumps(openai_resp).encode('utf-8')
-                self.send_response(200)
+                    with urllib.request.urlopen(req) as response:
+                        resp_body = response.read()
+                        gemini_resp = json.loads(resp_body)
+                        break # SUCCESS! Loop stop ho jayega
+                except urllib.error.HTTPError as e:
+                    last_err_body = e.read()
+                    last_code = e.code
+                    if e.code == 404:
+                        continue # Model not found! Koi na, Agla try karo!
+                    else:
+                        break # Limit ya API Dead error, yahi break karo.
+            
+            if not gemini_resp:
+                self.send_response(last_code)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(final_resp_body)
+                self.wfile.write(last_err_body)
+                return
                 
-        except urllib.error.HTTPError as e:
-            err_body = e.read()
-            self.send_response(e.code)
+            try:
+                translated_text = gemini_resp['candidates'][0]['content']['parts'][0]['text']
+            except (KeyError, IndexError):
+                translated_text = ""
+            
+            openai_resp = {
+                "id": "chatcmpl-native-gemini",
+                "object": "chat.completion",
+                "created": 1234567890,
+                "model": "gpt-3.5-turbo",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": translated_text},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
+            }
+            
+            final_resp_body = json.dumps(openai_resp).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(err_body)
+            self.wfile.write(final_resp_body)
+                
         except Exception as e:
             self.send_response(500)
             self.end_headers()
@@ -145,7 +165,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
-# Start local server to fake OpenAI
 server = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 # =================================================================
@@ -165,7 +184,6 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         
         CURRENT_GEMINI_KEY = api_key
         
-        # Pointing to LOCAL Adapter Instead of Google Directly
         os.environ["OPENAI_API_KEY"] = "sk-fake-key"
         os.environ["OPENAI_API_BASE"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
         os.environ["OPENAI_BASE_URL"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
