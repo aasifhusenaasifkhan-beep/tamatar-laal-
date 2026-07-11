@@ -14,7 +14,7 @@ import pyrogram.utils
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
-# Safe Channel Bypass
+# Safe Channel Bypass Fix
 pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 FILE_ID = os.getenv("FILE_ID", "").strip()
@@ -29,53 +29,81 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Clean separation of keys extracted from HF Environment payload.
 raw_keys = os.getenv("gemini_keys", "")
 GEMINI_KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
-print(f"=== START PROCESS - LANG: {LANG} | ARCHIVE: {FNAME} ===")
-print(f"✅ ACTIVATING DEEP ANNELISE LOAD BALANCER | API KEYS LOADED: {len(GEMINI_KEYS)}")
+print(f"=== DEEP-ANNELISE START [LANG: {LANG}] | FILE: {FNAME} ===")
+print(f"✅ ACTIVATING BALANCER | LOADED KEYS: {len(GEMINI_KEYS)}\n")
 
 if not BOT_TOKEN or len(BOT_TOKEN) < 10 or not API_ID:
-    print("❌ CRITICAL ERROR: GitHub Secrets (API_ID, BOT_TOKEN) are missing. Workflow Aborting!")
+    print("❌ CRITICAL ERROR: GitHub Secrets (API_ID, BOT_TOKEN) missing. Job Aborted!")
     sys.exit(1)
 
-def mask_key(key):
-    return f"...{key[-4:]}" if len(key) > 6 else "***"
-
 # =================================================================
-# 🚀 1. THREAD-SAFE ROUND ROBIN API KEY DISTRIBUTOR 
+# ⚙️ 1. THREAD-SAFE ROUND-ROBIN DISTRIBUTOR (THE 429 MANAGER)
 # =================================================================
-class APIKeyManager:
-    """Solves Threading bugs by safely distributing keys round-robin per request."""
+class SafekeyManager:
+    """Multi-Threading Safe Distributor - Prevents API key corruption overlapping"""
     def __init__(self, keys):
-        self.keys = keys
         self.lock = threading.Lock()
-        self._cycle = itertools.cycle(self.keys) if self.keys else None
-    
-    def get_key(self):
-        with self.lock:
-            if not self._cycle: return None
-            return next(self._cycle)
+        self.cycle = itertools.cycle(keys) if keys else None
 
-key_manager = APIKeyManager(GEMINI_KEYS)
+    def pop_key(self):
+        with self.lock:
+            return next(self.cycle) if self.cycle else None
+
+api_balancers = SafekeyManager(GEMINI_KEYS)
 
 # =================================================================
-# 🚀 2. LOCAL API INTERCEPTOR SERVER
+# 🧠 2. DYNAMIC MODEL RESOLVER DATABASE (THE 404 DESTROYER)
+# =================================================================
+MODEL_CACHE = {} 
+MODEL_LOCK = threading.Lock()
+
+def grab_certified_gemini_model(api_key):
+    """Dynamically asks Google exactly which Model exists on YOUR key to prevent 404 Discontinuity."""
+    with MODEL_LOCK:
+        if api_key in MODEL_CACHE:
+            return MODEL_CACHE[api_key]
+            
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    target = "gemini-2.0-flash" # Safe default constraint
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            # Find all model nodes capable of native structural content execution:
+            active_clusters = [ m['name'].replace('models/', '') for m in data.get('models', []) 
+                                if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            
+            if active_clusters:
+                # Always grab Top Tier active Flash, ignores Deprecated Pro
+                flashes = [c for c in active_clusters if 'flash' in c.lower() and 'lite' not in c.lower()]
+                flashes.sort(reverse=True)
+                target = flashes[0] if flashes else active_clusters[-1]
+                
+    except Exception as e:
+        print(f"⚠️ Dynamic Modeler Warning! Assuming latest node endpoint. Err: {e}")
+        
+    with MODEL_LOCK:
+        MODEL_CACHE[api_key] = target
+    return target
+
+# =================================================================
+# 🛡️ 3. LOCAL PROTOCOL PROXY SYSTEM (ROUTING MTPE INTO GEMINI NATIVE)
 # =================================================================
 PROXY_PORT = 11434
 
 class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass # Disabling output noise to prevent HTTP 200 clutter in logs
+        pass # Disabling default Webserver Log Print Triggers 
 
     def do_GET(self):
-        # Mocks 'gpt-3.5-turbo' model schema for validation checks
+        # Keeps MTPE Library thinking its verifying GPT-3.
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        mock_data = {"object": "list", "data": [{"id": "gpt-3.5-turbo", "object": "model", "created": 1234, "owned_by": "openai"}]}
-        self.wfile.write(json.dumps(mock_data).encode('utf-8'))
+        self.wfile.write(json.dumps({"object": "list", "data": [{"id": "gpt-3.5-turbo"}]}).encode('utf-8'))
 
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
@@ -83,139 +111,123 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         
         try:
             req_data = json.loads(body)
-            messages = req_data.get('messages', [])
             temperature = req_data.get('temperature', 0.3)
             
-            # Separation loop mapping GPT Prompt instructions to strict Google API format
-            system_text = ""
-            user_text = ""
-            for msg in messages:
-                if msg.get('role') == 'system':
-                    system_text += msg.get('content', '') + "\n"
+            sys_prompt = ""
+            user_prompt = ""
+            for m in req_data.get('messages', []):
+                if m.get('role') == 'system':
+                    sys_prompt += m.get('content', '') + "\n"
                 else:
-                    user_text += msg.get('content', '') + "\n"
+                    user_prompt += m.get('content', '') + "\n"
             
+            # Formally Built 100% Google Gemini Native Payload Specification
             gemini_payload = {
-                "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
                 "generationConfig": {"temperature": temperature}
             }
-            if system_text.strip():
-                # Fixes Gemini strict schema payload rejection formats (Fixes Bug 3)
-                gemini_payload["systemInstruction"] = {"parts": [{"text": system_text}]}
-            
-            gemini_body = json.dumps(gemini_payload).encode('utf-8')
+            if sys_prompt.strip():
+                # BUGFIX: Changed schema into Valid REST representation 'system_instruction' 
+                gemini_payload["system_instruction"] = {"parts": [{"text": sys_prompt}]}
+                
+            native_body = json.dumps(gemini_payload).encode('utf-8')
             
             success = False
-            last_err_body = b"{}"
-            last_code = 500
+            last_err_body = b'{}'
+            last_http_code = 500
             
-            # 🚀 RAPID-RETRY LOOP (Fixes Issue Bug 2)
-            # Total attempts cap to 3x per active Keys 
-            max_attempts = min(30, len(GEMINI_KEYS) * 3 + 2)
+            # Attempt Recovery Network: Swaps 10 Keys multiple times 
+            max_pings = (len(GEMINI_KEYS) * 2) + 2 
             
-            for attempt in range(max_attempts):
-                sys_api = key_manager.get_key()
-                if not sys_api:
-                    break
+            for index in range(max_pings):
+                primary_key = api_balancers.pop_key() 
+                if not primary_key: break
                 
-                # Locked default 1.5-flash for max stability across different region clusters
-                url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={sys_api}'
-                req = urllib.request.Request(url, data=gemini_body, method='POST')
+                # Fetch EXACT model verified existing for THIS assigned api_key. No guessing!
+                verified_modelstr = grab_certified_gemini_model(primary_key)
+                
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{verified_modelstr}:generateContent?key={primary_key}"
+                req = urllib.request.Request(url, data=native_body, method='POST')
                 req.add_header('Content-Type', 'application/json')
                 
                 try:
-                    with urllib.request.urlopen(req) as response:
-                        resp_body = response.read()
-                        gemini_resp = json.loads(resp_body)
+                    with urllib.request.urlopen(req) as resp:
+                        gemini_reply = json.loads(resp.read().decode('utf-8'))
                         success = True
-                        break # Limit and response bypass fully functional, break sequence
+                        break # Node Translate confirmed OK!
                         
-                except urllib.error.HTTPError as e:
-                    last_code = e.code
-                    last_err_body = e.read()
+                except urllib.error.HTTPError as h_err:
+                    last_http_code = h_err.code
+                    last_err_body = h_err.read()
                     
-                    if last_code in (429, 500): 
-                        # 429 Limits (15 RPM Exceeded) or Google Backend Outages
-                        # Instantly loop next assigned key! No massive 60 sec stops saving Library timeout.
-                        time.sleep(1.2) 
-                        continue
-                    elif last_code == 404:
-                        # Dead endpoint or deprecated key node. Sleep slightly and loop next request.
-                        time.sleep(1.0)
+                    if last_http_code == 429: # Resource Load Empty Request
+                        time.sleep(2) # Give proxy a sec before sweeping keys
+                        continue 
+                    elif last_http_code in (404, 400):  
+                        # Hard Deprecated / Model Flaw. Reset cache block and try swap!
+                        if primary_key in MODEL_CACHE: del MODEL_CACHE[primary_key]
                         continue
                     else:
-                        break # Unrecoverable API block
-
-            # If all 30 sub-attempts exhaust and fail
+                        time.sleep(1) # E.g 500 Internals Breakage limits
+                        continue
+            
             if not success:
-                self.send_response(last_code)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(last_err_body)
-                return
-            
-            # Google Response Content parsing with Safely built Block Checks
+               self.send_response(last_http_code)
+               self.send_header('Content-Type', 'application/json')
+               self.end_headers()
+               self.wfile.write(last_err_body)
+               return
+               
+            # Final Output Formatter
             try:
-                translated_text = ""
-                candidates = gemini_resp.get('candidates', [])
-                if candidates:
-                    parts = candidates[0].get('content', {}).get('parts', [])
-                    if parts:
-                        translated_text = parts[0].get('text', '')
-            except Exception:
-                translated_text = "[SAFETY OR PARSER FAILED]"
-            
-            # Reconstruction payload compatible natively returning to MTPE library 
-            openai_resp = {
-                "id": "chatcmpl-native-gemini-bypasser",
+                extraction = gemini_reply.get('candidates', [])[0]['content']['parts'][0]['text']
+            except (KeyError, IndexError):
+                extraction = "[DeepAnnelise: Format Parse Corrupted]"
+                
+            reconstructed_op = {
+                "id": "chatcmpl-native-gemini-protocol",
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": "gpt-3.5-turbo",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": translated_text},
-                    "finish_reason": "stop"
-                }],
-                "usage": {"prompt_tokens": len(user_text), "completion_tokens": len(translated_text), "total_tokens": 0}
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": extraction}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
             }
             
-            final_resp_body = json.dumps(openai_resp).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(final_resp_body)
-                
-        except Exception as e:
+            self.wfile.write(json.dumps(reconstructed_op).encode('utf-8'))
+            
+        except Exception as Ex:
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(str(e).encode('utf-8'))
+            self.wfile.write(str(Ex).encode('utf-8'))
 
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer): daemon_threads = True
 
-# Spawning Threaded Backdoor Protocol Server
 if GEMINI_KEYS:
-    server = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Wake up Protocol Environment Network Node 
+    proxy_system = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
+    threading.Thread(target=proxy_system.serve_forever, daemon=True).start()
 
 # =================================================================
-# 🚀 3. THE DISPATCH WORKER CORE 
+# 🧬 4. BATCH TRIGGER AND MTPE EXECUTION CORE
 # =================================================================
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
-
     if not GEMINI_KEYS:
-        return False, "Failed", "0 API Keys found inside processing system. Apply using /addapi."
+        return False, "Failed", "WARNING! Empty Database Request -> 0 Keys Supplied! Please inject keys via /addapi"
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     
-    # Rerouting Official Application Base environment toward internal 3D protocol script mapping
-    os.environ["OPENAI_API_KEY"] = "sk-fake-interceptor-bypass"
+    # Force injection parameter redirector over localhost Protocol
+    os.environ["OPENAI_API_KEY"] = "sk-interception.system"
     os.environ["OPENAI_API_BASE"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
     os.environ["OPENAI_BASE_URL"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
 
     gpt_config_path = os.path.join(workspace, "gpt_config.yml")
     
+    # Internal Framework NLP Processing 
     if LANG == "hienglish":
         cfg = """gpt3.5:
   temperature: 0.3
@@ -228,60 +240,56 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
   prompt_template: "Translate to English: "
   chat_system_template: "You are a professional manga translator. Accurately translate the text to natural-sounding English."
 """
-        
     with open(gpt_config_path, "w", encoding="utf-8") as f:
         f.write(cfg)
 
-    # Note the CLI injection using 'gpt3.5' translator, seamlessly intercepted by localhost protocol
+    # Boot the sequence utilizing fake "GPT3.5" to trigger the trap. 
     cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3.5", "-l", "ENG", "--gpt-config", gpt_config_path] + style_flags
-
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
+    if os.path.exists(output_dir): shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
     out, _ = await proc.communicate()
     log = out.decode('utf-8', errors='ignore')
 
-    cnt = 0
+    cnt_results = 0
     if os.path.exists(output_dir):
-        for r,_,fs in os.walk(output_dir):
-            cnt += len([f for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
+        base_results = [f for root, _, fx in os.walk(output_dir) for f in fx if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))]
+        cnt_results = len(base_results)
 
-    print(f"Translation Output | Return Code {proc.returncode} | Generative Archivals Saved: {cnt}")
+    print(f">> Translation Yield Finalised -> ReturnCode {proc.returncode} | Output Matrices Generated: {cnt_results}")
 
-    if proc.returncode == 0 and cnt > 0:
-        return True, "GEMINI FLUX ENGINE", log
+    if proc.returncode == 0 and cnt_results > 0:
+        return True, "DEEP ANNELISE GEMINI NATIVE ENGINE", log
     
     return False, "Failed", log
 
 # =================================================================
-# 🚀 4. MAIN TELEGRAM INTERFACE & WRAPPER
+# 📥 5. PRIMARY ENDPOINT FRAME (TELEGRAM BOT DOWNLOAD MANAGER)
 # =================================================================
 async def main():
     if not FILE_ID: return
-    bot = Client("Worker", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, no_updates=True)
-    await bot.start()
-    async def edit(t):
-        try: await bot.edit_message_text(CHAT_ID, MSG_ID, t)
+    tg_bot = Client("Worker", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, no_updates=True)
+    await tg_bot.start()
+    async def e_msg(s_t):
+        try: await tg_bot.edit_message_text(CHAT_ID, MSG_ID, s_t)
         except: pass
 
-    await edit(f"⏳ **Extraction Layer Processing Archive {FNAME}...**")
+    await e_msg(f"⏳ **Extraction Layer Processing Archive: {FNAME}...**")
 
     dl_path = None
-    for i in range(1,6):
+    for attempt_seq in range(1, 6):
         try:
-            dl_path = await bot.download_media(FILE_ID)
+            dl_path = await tg_bot.download_media(FILE_ID)
             if dl_path and os.path.exists(dl_path) and os.path.getsize(dl_path) > 1024:
                 break
             await asyncio.sleep(2)
-        except Exception as e:
-            await edit(f"⚠️ **Transmission Frame Dropout {i}/5** Relaying Request...")
+        except BaseException as B_EX:
+            await e_msg(f"⚠️ **Transmission Frame Dropout {attempt_seq}/5** Relaying Request...")
             await asyncio.sleep(3)
 
     if not dl_path or not os.path.exists(dl_path):
-        await edit("❌ **Subsystem Corrupted Error | Media Not Extractable.**")
-        return await bot.stop()
+        return await tg_bot.stop()
 
     ext = os.path.splitext(FNAME)[1].lower() or ".zip"
     ws = os.path.abspath("manga_workspace")
@@ -295,67 +303,65 @@ async def main():
             with zipfile.ZipFile(dl_path,'r') as z: z.extractall(inp)
         elif ext == ".pdf":
             import fitz
-            doc = fitz.open(dl_path)
-            for n in range(len(doc)):
-                pg = doc.load_page(n)
-                pg.get_pixmap(dpi=150).save(os.path.join(inp, f"page_{n:03d}.png"))
-            doc.close()
+            pdf_layer = fitz.open(dl_path)
+            for znc_n in range(len(pdf_layer)):
+                pdf_pg = pdf_layer.load_page(znc_n)
+                pdf_pg.get_pixmap(dpi=150).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
+            pdf_layer.close()
         else:
             shutil.copy(dl_path, inp)
     except zipfile.BadZipFile:
-        await edit("❌ **Subsystem Corrupted Error | Unrecognized ZIP format detected.**")
-        return await bot.stop()
+        await e_msg("❌ **Core Error | Archive Data Corrupted, Rejecting Format Protocol.** (Send valid format)")
+        return await tg_bot.stop()
 
     pages = [os.path.join(r,f) for r,_,fs in os.walk(inp) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp','.bmp'))]
     if not pages:
-        await edit("❌ Unrecognized graphical frames (Ensure structural paths enclose images).")
-        return await bot.stop()
+        return await tg_bot.stop()
 
-    lang_display = "Hinglish NLP Model" if LANG == "hienglish" else "English Vector NLP"
-    await edit(f"🔄 **Engine Routing Initialized** {len(pages)} Sequence Units | {lang_display} | Utilizing Dynamic {len(GEMINI_KEYS)} APIs Load Balancer! ✨")
+    lang_ux = "Hinglish NLP Interface Target" if LANG == "hienglish" else "English Vector Standardize"
+    await e_msg(f"🔄 **Engine Routing Initialised | Visual Nodes: {len(pages)}** [NLP Protocol: {lang_ux}] ✨\n_Utilizing Dynamic Network Node Balancing Mode._")
 
-    ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
+    success_bool, prvd_ui, full_core_log = await run_translator_with_fallback(inp, out, ws)
 
-    if not ok:
-        fail_msg = f"⚠️ **FATAL FRAME ERROR | Internal Request Crash:**\n\n😔 Diagnostics Output Dump\n\n_Logs:_ `{full_log[-350:]}`"
-        await edit(fail_msg)
-        return await bot.stop()
+    if not success_bool:
+        err_out = f"⚠️ **ALL KEYS CRASHED (Limit Complete Exhaustion) / Model Denied Server Error:**\n\n😔 Diagnostics Output Dump\n\n_Logs:_ `{full_core_log[-450:]}`"
+        await e_msg(err_out)
+        return await tg_bot.stop()
 
-    await edit(f"🎨 **Visual Output Sequence Complete | Rendering Archive Format Mode...**")
+    await e_msg(f"🎨 **Compilation Finished.** | Rendering Network Zip Processors...")
 
-    files = sorted([os.path.join(r,f) for r,_,fs in os.walk(out) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
+    finals_l = sorted([os.path.join(r,f) for r,_,fs in os.walk(out) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
     
-    final_file = "translated_" + FNAME if ext in [".zip",".cbz",".pdf"] else files[0]
+    zipx_out = "translated_" + FNAME if ext in [".zip",".cbz",".pdf"] else finals_l[0]
     
     if ext in [".zip",".cbz"]:
-        with zipfile.ZipFile(final_file,'w',zipfile.ZIP_DEFLATED) as z:
-            for f in files: z.write(f, os.path.relpath(f,out))
+        with zipfile.ZipFile(zipx_out,'w',zipfile.ZIP_DEFLATED) as z_enc:
+            for fd_c in finals_l: z_enc.write(fd_c, os.path.relpath(fd_c, out))
     elif ext == ".pdf":
         from PIL import Image
-        imgs = [Image.open(f).convert('RGB') for f in files]
-        if imgs: imgs[0].save(final_file, save_all=True, append_images=imgs[1:])
+        px_i_set = [Image.open(p_z_file).convert('RGB') for p_z_file in finals_l]
+        if px_i_set: px_i_set[0].save(zipx_out, save_all=True, append_images=px_i_set[1:])
 
-    file_size_mb = os.path.getsize(final_file) / (1024*1024)
-    if file_size_mb > 1900:
-        await edit(f"❌ **File too big {file_size_mb:.1f} MB** Transmission Payload Aborted.")
-        return await bot.stop()
+    sbslmt_zpb = os.path.getsize(zipx_out) / (1024*1024)
+    if sbslmt_zpb > 1900:
+        await e_msg(f"❌ **Package Maxed Overweight Payload -> {sbslmt_zpb:.1f} MB** | 2GB Over MTProto Threshold limit broken.")
+        return await tg_bot.stop()
 
-    caption = f"✅ **Processed Sequence Engine: [{provider_msg}]**\n🌐 Network Node: {lang_display}  \n⚙️ Protocol Structure: {STYLE}"
+    endcap_caption = f"✅ **Processing Operation Completed**\n🌐 Network Node Format: {lang_ux}\n⚡ Execution Handler Node: [Auto Balance Keys & Models Native]\n"
     try:
-        await bot.send_document(CHAT_ID, final_file, caption=caption)
-        try: await bot.delete_messages(CHAT_ID, MSG_ID)
+        await tg_bot.send_document(CHAT_ID, zipx_out, caption=endcap_caption)
+        try: await tg_bot.delete_messages(CHAT_ID, MSG_ID)
         except: pass
-    except Exception as e:
-        await edit(f"❌ Telegram MTProto Client Upload Failure: {e}")
+    except Exception:
+        pass
 
     shutil.rmtree(ws, ignore_errors=True)
     try: os.remove(dl_path)
     except: pass
     try:
-        if ext in [".zip",".cbz",".pdf"]: os.remove(final_file)
+        if ext in [".zip",".cbz",".pdf"]: os.remove(zipx_out)
     except: pass
-    await bot.stop()
-
+    await tg_bot.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
