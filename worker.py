@@ -25,11 +25,13 @@ GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.s
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
 print(f"KEYS RECEIVED: {len(GEMINI_KEYS)}")
 
-# Error Keywords list for Gemini
 LIMIT_KEYWORDS = ["429", "rate limit", "quota", "limit exceeded", "resource exhausted", "too many requests", "billing", "free quota", "missingapikey"]
 
 def is_limit_error(text):
     return any(k in text.lower() for k in LIMIT_KEYWORDS)
+
+def mask_key(key):
+    return f"...{key[-4:]}" if len(key) > 6 else "***"
 
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
@@ -40,23 +42,21 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
 
-    # Yaha loop chalta hai: Ek key fail hui to agla key use hoga
     for idx, api_key in enumerate(GEMINI_KEYS):
-        print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: ...{api_key[-5:]})")
+        print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
         
         # Reset Env for clean slate
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
 
-        # Gemini API Override Trick
+        # Gemini API Proxy Set (Accepts AQ and AIza both smoothly)
         os.environ["OPENAI_API_KEY"] = api_key
         os.environ["OPENAI_API_BASE"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
         os.environ["OPENAI_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
 
         gpt_config_path = os.path.join(workspace, "gpt_config.yml")
         
-        # ROMAN HINDI PROMPT (Bina Devanagari)
         if LANG == "hienglish":
             cfg = """gpt3.5:
   temperature: 0.3
@@ -96,9 +96,9 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         else:
             if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower():
                 print(f"Key LIMIT / DEAD. Shifting to next API key...")
-                continue # Limit khatam? Agli key try karega
+                continue
             else:
-                print(f"Unknown Translation Error. Shifting anyway... {log[-400:]}")
+                print(f"Translation Error. Shifting anyway... {log[-400:]}")
                 continue
 
     return False, "Failed", last_log
@@ -160,7 +160,6 @@ async def main():
 
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
-    # Agar OK nahi hai (Matlab sari keys check kar li aur sab fail)
     if not ok:
         fail_msg = f"⚠️ **Sabki limit khatam ho gayi hai!**\n\n😔 Saari Gemini APIs exhaust ho chuki hain.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-200:]}`"
         await edit(fail_msg)
