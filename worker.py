@@ -32,7 +32,6 @@ GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.s
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
 print(f"KEYS RECEIVED FROM HF DB: {len(GEMINI_KEYS)}")
 
-# Error Catching Logic
 if not BOT_TOKEN or len(BOT_TOKEN) < 10:
     print("❌ CRITICAL ERROR: BOT_TOKEN is missing or invalid in GitHub Secrets!")
     sys.exit(1)
@@ -49,55 +48,95 @@ def mask_key(key):
     return f"...{key[-4:]}" if len(key) > 6 else "***"
 
 # =================================================================
-# 🚀 LOCAL PROXY INTERCEPTOR (THE ULTIMATE FIX FOR 404 NOT_FOUND)
+# 🚀 NATIVE GEMINI ADAPTER (BYPASSES GOOGLE OPENAI 404 ERROR)
 # =================================================================
 PROXY_PORT = 11434
 CURRENT_GEMINI_KEY = ""
 
 class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass # Logs hide karega taaki output clean rahe
+        pass # Logs hide karega
 
+    # Agar library check kare models
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        mock_data = {
+            "object": "list",
+            "data": [{"id": "gpt-3.5-turbo", "object": "model", "created": 1234567, "owned_by": "openai"}]
+        }
+        self.wfile.write(json.dumps(mock_data).encode('utf-8'))
+
+    # Request intercept aur Native format me convert
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
         
         try:
-            data = json.loads(body)
-            # MAGIC PATCH: Payload me model name ko forcefully Gemini bana dega
-            data['model'] = 'gemini-1.5-flash'
-            # Gemini jo arguments support nahi karta unhe hata dega
-            data.pop('frequency_penalty', None)
-            data.pop('presence_penalty', None)
-            data.pop('user', None)
-            data.pop('seed', None)
-            body = json.dumps(data).encode('utf-8')
-        except Exception:
-            pass
-        
-        # Route directly to Google Gemini's endpoint
-        url = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions'
-        req = urllib.request.Request(url, data=body, method='POST')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('Authorization', f'Bearer {CURRENT_GEMINI_KEY}')
-        
-        try:
+            req_data = json.loads(body)
+            messages = req_data.get('messages', [])
+            temperature = req_data.get('temperature', 0.3)
+            
+            system_text = ""
+            user_text = ""
+            
+            # OpenAI message structure to Gemini structure
+            for msg in messages:
+                if msg.get('role') == 'system':
+                    system_text += msg.get('content', '') + "\n"
+                else:
+                    user_text += msg.get('content', '') + "\n"
+            
+            # OFFICIAL NATIVE GEMINI FORMAT (NO OPENAI WRAPPER)
+            gemini_payload = {
+                "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+                "generationConfig": {"temperature": temperature}
+            }
+            if system_text.strip():
+                gemini_payload["system_instruction"] = {"parts": [{"text": system_text}]}
+            
+            gemini_body = json.dumps(gemini_payload).encode('utf-8')
+            
+            # NATIVE ENDPOINT CALL
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={CURRENT_GEMINI_KEY}'
+            req = urllib.request.Request(url, data=gemini_body, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            
             with urllib.request.urlopen(req) as response:
                 resp_body = response.read()
-                self.send_response(response.status)
-                for k, v in response.headers.items():
-                    if k.lower() not in ['transfer-encoding', 'content-encoding']:
-                        self.send_header(k, v)
+                gemini_resp = json.loads(resp_body)
+                
+                try:
+                    translated_text = gemini_resp['candidates'][0]['content']['parts'][0]['text']
+                except (KeyError, IndexError):
+                    translated_text = ""
+                
+                # REPACK TO OPENAI FORMAT FOR THE LIBRARY
+                openai_resp = {
+                    "id": "chatcmpl-native-gemini",
+                    "object": "chat.completion",
+                    "created": 1234567890,
+                    "model": "gpt-3.5-turbo",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": translated_text},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
+                }
+                
+                final_resp_body = json.dumps(openai_resp).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(resp_body)
+                self.wfile.write(final_resp_body)
+                
         except urllib.error.HTTPError as e:
-            resp_body = e.read()
+            err_body = e.read()
             self.send_response(e.code)
-            for k, v in e.headers.items():
-                if k.lower() not in ['transfer-encoding', 'content-encoding']:
-                    self.send_header(k, v)
             self.end_headers()
-            self.wfile.write(resp_body)
+            self.wfile.write(err_body)
         except Exception as e:
             self.send_response(500)
             self.end_headers()
@@ -106,7 +145,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
-# Start local proxy in background
+# Start local server to fake OpenAI
 server = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 # =================================================================
@@ -126,7 +165,7 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         
         CURRENT_GEMINI_KEY = api_key
         
-        # Traffic ko Local Proxy pe bhejna (jo theek se rewrite karke Gemini pe bhej dega)
+        # Pointing to LOCAL Adapter Instead of Google Directly
         os.environ["OPENAI_API_KEY"] = "sk-fake-key"
         os.environ["OPENAI_API_BASE"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
         os.environ["OPENAI_BASE_URL"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
@@ -170,8 +209,8 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         if proc.returncode == 0 and cnt > 0:
             return True, "GEMINI", log
         else:
-            if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower() or "not_found" in log.lower():
-                print(f"Key LIMIT / DEAD / 404 Error. Shifting to next API key...")
+            if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower():
+                print(f"Key LIMIT / DEAD. Shifting to next API key...")
                 continue
             else:
                 print(f"Translation Error. Shifting anyway... \n{log[-400:]}")
@@ -237,7 +276,7 @@ async def main():
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
     if not ok:
-        fail_msg = f"⚠️ **Translation / API Error:**\n\n😔 System ne koshish ki par translate nahi ho paya.\n\n_Logs:_ `{full_log[-300:]}`"
+        fail_msg = f"⚠️ **Translation Error / Limit Exhausted:**\n\n😔 Sab koshish fail ho gayi.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-300:]}`"
         await edit(fail_msg)
         return await bot.stop()
 
