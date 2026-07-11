@@ -12,8 +12,6 @@ from pyrogram import Client
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
-# ❌ REMOVED pyrogram.utils.get_peer_type patch to fix BOT_METHOD_INVALID
-
 FILE_ID = os.getenv("FILE_ID", "").strip()
 CHAT_ID = int(os.getenv("CHAT_ID", "0"))
 MSG_ID = int(os.getenv("MSG_ID", "0"))
@@ -29,22 +27,20 @@ raw_keys = os.getenv("gemini_keys", "")
 GEMINI_KEYS = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
 print(f"=== DEEP-ANNELISE START [LANG: {LANG}] | FILE: {FNAME} ===")
-print(f"✅ ACTIVATING BALANCER | LOADED KEYS: {len(GEMINI_KEYS)}\n")
+print(f"✅ ACTIVATING AUTO-HEALING BALANCER | LOADED KEYS: {len(GEMINI_KEYS)}\n")
 
 if not BOT_TOKEN or not API_ID:
     print("❌ CRITICAL ERROR: GitHub Secrets missing. Job Aborted!")
     sys.exit(1)
 
 # =================================================================
-# ⚙️ 1. RATE LIMITER & KEY ROTATOR (PREVENTS 429 ERRORS)
+# ⚙️ 1. RATE LIMITER & KEY ROTATOR 
 # =================================================================
 class SafeRateLimiter:
-    """Calculates exact delay needed based on Google's 15 Requests Per Minute limit"""
     def __init__(self, keys):
         self.keys = keys
         self.lock = threading.Lock()
         self.idx = 0
-        # 14 RPM max per key for safety margin = (60 seconds / (14 * number of keys))
         self.delay_between_requests = 60.0 / (14 * max(1, len(keys))) 
         self.last_call = 0.0
 
@@ -54,7 +50,6 @@ class SafeRateLimiter:
             elapsed = now - self.last_call
             if elapsed < self.delay_between_requests:
                 time.sleep(self.delay_between_requests - elapsed)
-            
             self.last_call = time.time()
             key = self.keys[self.idx]
             self.idx = (self.idx + 1) % len(self.keys)
@@ -63,10 +58,12 @@ class SafeRateLimiter:
 api_balancer = SafeRateLimiter(GEMINI_KEYS)
 
 # =================================================================
-# 🛡️ 2. LOCAL PROTOCOL PROXY SYSTEM (FIXES 404 & ROUTES TO GEMINI)
+# 🛡️ 2. AUTO-HEALING PROTOCOL PROXY (BULLETPROOF FIX)
 # =================================================================
 PROXY_PORT = 11434
-MODEL_NAME = "gemini-1.5-flash" # Hardcoded stable model - Stops 404 Errors
+
+# If one model throws a 404, it instantly tests the next one.
+MODELS_TO_TEST = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.0-pro"]
 
 class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): pass 
@@ -101,22 +98,43 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                 
             native_body = json.dumps(gemini_payload).encode('utf-8')
             
-            # Fetch Key & Apply Wait Time (Protects against 429)
-            primary_key = api_balancer.get_key_and_wait()
+            success = False
+            last_err_body = b'{}'
+            last_http_code = 500
             
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={primary_key}"
-            req = urllib.request.Request(url, data=native_body, method='POST')
-            req.add_header('Content-Type', 'application/json')
+            # Auto-Healing Loop: Try different keys and models until one works
+            for attempt in range(len(GEMINI_KEYS) * 2):
+                primary_key = api_balancer.get_key_and_wait()
+                
+                for model_name in MODELS_TO_TEST:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={primary_key}"
+                    req = urllib.request.Request(url, data=native_body, method='POST')
+                    req.add_header('Content-Type', 'application/json')
+                    
+                    try:
+                        with urllib.request.urlopen(req) as resp:
+                            gemini_reply = json.loads(resp.read().decode('utf-8'))
+                            extraction = gemini_reply.get('candidates', [])[0]['content']['parts'][0]['text']
+                            success = True
+                            break # Success! Break model loop
+                            
+                    except urllib.error.HTTPError as h_err:
+                        last_http_code = h_err.code
+                        last_err_body = h_err.read()
+                        
+                        if last_http_code in [404, 400]:
+                            continue # Model not found, try the next model in the list instantly
+                        elif last_http_code in [429, 403]:
+                            break # Rate limited or key banned, break model loop, try next API key
+                
+                if success:
+                    break # Break retry loop
             
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    gemini_reply = json.loads(resp.read().decode('utf-8'))
-                    extraction = gemini_reply.get('candidates', [])[0]['content']['parts'][0]['text']
-            except urllib.error.HTTPError as h_err:
-                self.send_response(h_err.code)
+            if not success:
+                self.send_response(last_http_code)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(h_err.read())
+                self.wfile.write(last_err_body)
                 return
                
             reconstructed_op = {
@@ -145,7 +163,7 @@ if GEMINI_KEYS:
     threading.Thread(target=proxy_system.serve_forever, daemon=True).start()
 
 # =================================================================
-# 🧬 3. MTPE EXECUTION CORE (WITH ENHANCED HINGLISH PROMPT)
+# 🧬 3. MTPE EXECUTION CORE
 # =================================================================
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
@@ -157,7 +175,6 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 
     gpt_config_path = os.path.join(workspace, "gpt_config.yml")
     
-    # 🎯 Enhanced NLP Prompts for Perfect Translations
     if LANG == "hienglish":
         cfg = """gpt3.5:
   temperature: 0.3
@@ -236,7 +253,7 @@ async def main():
     pages = [os.path.join(r,f) for r,_,fs in os.walk(inp) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp','.bmp'))]
     if not pages: return await tg_bot.stop()
 
-    await e_msg(f"🔄 **Translating {len(pages)} Pages...**\n_Safe Rate Limiter Active (No 429 Errors)_ ✨")
+    await e_msg(f"🔄 **Translating {len(pages)} Pages...**\n_Auto-Healing Proxy Active (Bypassing 404s)_ ✨")
 
     success_bool, prvd_ui, full_core_log = await run_translator_with_fallback(inp, out, ws)
 
@@ -263,7 +280,7 @@ async def main():
         return await tg_bot.stop()
 
     try:
-        await tg_bot.send_document(CHAT_ID, zipx_out, caption="✅ **Processing Completed**\nPowered by Deep Annelise")
+        await tg_bot.send_document(CHAT_ID, zipx_out, caption="✅ **Processing Completed**\nPowered by Deep Annelise Auto-Healer")
         try: await tg_bot.delete_messages(CHAT_ID, MSG_ID)
         except: pass
     except Exception: pass
