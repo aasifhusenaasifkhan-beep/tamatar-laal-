@@ -3,10 +3,16 @@ import sys
 import zipfile
 import shutil
 import asyncio
-import re  # NAYA IMPORT DEEP PATCH KE LIYE
+import json
+import threading
+import urllib.request
+import urllib.error
 from pyrogram import Client
 import pyrogram.utils
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
+# Safe Channel Bypass
 pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 FILE_ID = os.getenv("FILE_ID", "").strip()
@@ -26,14 +32,12 @@ GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.s
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
 print(f"KEYS RECEIVED FROM HF DB: {len(GEMINI_KEYS)}")
 
+# Error Catching Logic
 if not BOT_TOKEN or len(BOT_TOKEN) < 10:
     print("❌ CRITICAL ERROR: BOT_TOKEN is missing or invalid in GitHub Secrets!")
     sys.exit(1)
 if not API_ID or API_ID == 0:
     print("❌ CRITICAL ERROR: API_ID is missing in GitHub Secrets!")
-    sys.exit(1)
-if not API_HASH:
-    print("❌ CRITICAL ERROR: API_HASH is missing in GitHub Secrets!")
     sys.exit(1)
 
 LIMIT_KEYWORDS = ["429", "rate limit", "quota", "limit exceeded", "resource exhausted", "too many requests", "billing", "free quota", "missingapikey"]
@@ -44,7 +48,71 @@ def is_limit_error(text):
 def mask_key(key):
     return f"...{key[-4:]}" if len(key) > 6 else "***"
 
+# =================================================================
+# 🚀 LOCAL PROXY INTERCEPTOR (THE ULTIMATE FIX FOR 404 NOT_FOUND)
+# =================================================================
+PROXY_PORT = 11434
+CURRENT_GEMINI_KEY = ""
+
+class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass # Logs hide karega taaki output clean rahe
+
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+        
+        try:
+            data = json.loads(body)
+            # MAGIC PATCH: Payload me model name ko forcefully Gemini bana dega
+            data['model'] = 'gemini-1.5-flash'
+            # Gemini jo arguments support nahi karta unhe hata dega
+            data.pop('frequency_penalty', None)
+            data.pop('presence_penalty', None)
+            data.pop('user', None)
+            data.pop('seed', None)
+            body = json.dumps(data).encode('utf-8')
+        except Exception:
+            pass
+        
+        # Route directly to Google Gemini's endpoint
+        url = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions'
+        req = urllib.request.Request(url, data=body, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Authorization', f'Bearer {CURRENT_GEMINI_KEY}')
+        
+        try:
+            with urllib.request.urlopen(req) as response:
+                resp_body = response.read()
+                self.send_response(response.status)
+                for k, v in response.headers.items():
+                    if k.lower() not in ['transfer-encoding', 'content-encoding']:
+                        self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(resp_body)
+        except urllib.error.HTTPError as e:
+            resp_body = e.read()
+            self.send_response(e.code)
+            for k, v in e.headers.items():
+                if k.lower() not in ['transfer-encoding', 'content-encoding']:
+                    self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(resp_body)
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(str(e).encode('utf-8'))
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+# Start local proxy in background
+server = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+# =================================================================
+
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
+    global CURRENT_GEMINI_KEY
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
 
     if not GEMINI_KEYS:
@@ -53,51 +121,26 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
 
-    # 🚀 MAGIC PATCH V2: Deep Regex Replace to fix "NOT_FOUND" (GPT -> Gemini)
-    if cwd_dir:
-        trans_dir = os.path.join(cwd_dir, "manga_translator", "translators")
-        if os.path.exists(trans_dir):
-            for filename in os.listdir(trans_dir):
-                if filename.endswith(".py"):
-                    filepath = os.path.join(trans_dir, filename)
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        text = f.read()
-                    
-                    # Chahe gpt-3.5-turbo-0125 ho, ya gpt-4, sabko forcibly 'gemini-1.5-flash' bana dega
-                    new_text = re.sub(r'gpt-3\.5-turbo[-A-Za-z0-9]*', 'gemini-1.5-flash', text)
-                    new_text = re.sub(r'gpt-4[-A-Za-z0-9]*', 'gemini-1.5-flash', new_text)
-                    
-                    if new_text != text:
-                        with open(filepath, "w", encoding="utf-8") as f:
-                            f.write(new_text)
-                        print(f"✅ MAGIC PATCH: Library Updated to Gemini in {filename}")
-
     for idx, api_key in enumerate(GEMINI_KEYS):
         print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
         
-        # Purane environment variables clear karna
-        os.environ.pop("OPENAI_API_KEY", None)
-        os.environ.pop("OPENAI_API_BASE", None)
-        os.environ.pop("OPENAI_BASE_URL", None)
-
-        # Official Gemini OpenAI Compatibility endpoint set karna
-        os.environ["OPENAI_API_KEY"] = api_key
-        os.environ["OPENAI_API_BASE"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        os.environ["OPENAI_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        CURRENT_GEMINI_KEY = api_key
+        
+        # Traffic ko Local Proxy pe bhejna (jo theek se rewrite karke Gemini pe bhej dega)
+        os.environ["OPENAI_API_KEY"] = "sk-fake-key"
+        os.environ["OPENAI_API_BASE"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
+        os.environ["OPENAI_BASE_URL"] = f"http://127.0.0.1:{PROXY_PORT}/v1"
 
         gpt_config_path = os.path.join(workspace, "gpt_config.yml")
         
-        # Double Protection: Config me bhi 'gemini-1.5-flash' model pass karna
         if LANG == "hienglish":
             cfg = """gpt3.5:
-  model: "gemini-1.5-flash"
   temperature: 0.3
   prompt_template: "Translate to Hinglish: "
   chat_system_template: "You are a professional manga translator. You MUST translate the text into Hinglish (Hindi written in Roman English alphabet). For example, translate 'I am talking to you' to 'Main abhi tumse baat kar raha hu'. Do NOT use the Devanagari script (like 'मैं', 'तुम'). Only output the translated Hinglish text and nothing else."
 """
         else:
             cfg = """gpt3.5:
-  model: "gemini-1.5-flash"
   temperature: 0.3
   prompt_template: "Translate to English: "
   chat_system_template: "You are a professional manga translator. Accurately translate the text to natural-sounding English."
@@ -127,7 +170,6 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         if proc.returncode == 0 and cnt > 0:
             return True, "GEMINI", log
         else:
-            # Agar limit khatam, API invalid, ya Google API ban error aaye toh shift karega
             if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower() or "not_found" in log.lower():
                 print(f"Key LIMIT / DEAD / 404 Error. Shifting to next API key...")
                 continue
@@ -195,7 +237,7 @@ async def main():
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
     if not ok:
-        fail_msg = f"⚠️ **Sabki limit khatam ho gayi hai!**\n\n😔 Saari Gemini APIs exhaust ho chuki hain.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-300:]}`"
+        fail_msg = f"⚠️ **Translation / API Error:**\n\n😔 System ne koshish ki par translate nahi ho paya.\n\n_Logs:_ `{full_log[-300:]}`"
         await edit(fail_msg)
         return await bot.stop()
 
