@@ -23,8 +23,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.strip()]
 
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
-print(f"KEYS: GEMINI={len(GEMINI_KEYS)}")
+print(f"KEYS RECEIVED: {len(GEMINI_KEYS)}")
 
+# Error Keywords list for Gemini
 LIMIT_KEYWORDS = ["429", "rate limit", "quota", "limit exceeded", "resource exhausted", "too many requests", "billing", "free quota", "missingapikey"]
 
 def is_limit_error(text):
@@ -34,14 +35,16 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
 
     if not GEMINI_KEYS:
-        return False, "Failed", "No Gemini API Keys provided. Use /addapi in bot."
+        return False, "Failed", "No API left, please add new API using /addapi."
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
+    last_log = ""
 
+    # Yaha loop chalta hai: Ek key fail hui to agla key use hoga
     for idx, api_key in enumerate(GEMINI_KEYS):
         print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: ...{api_key[-5:]})")
         
-        # Reset Env
+        # Reset Env for clean slate
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
@@ -53,7 +56,7 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 
         gpt_config_path = os.path.join(workspace, "gpt_config.yml")
         
-        # PROMPT LOGIC - Hinglish (Roman Hindi) ka Introduction Default Set kiya gaya hai
+        # ROMAN HINDI PROMPT (Bina Devanagari)
         if LANG == "hienglish":
             cfg = """gpt3.5:
   temperature: 0.3
@@ -61,7 +64,6 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
   chat_system_template: "You are a professional manga translator. You MUST translate the text into Hinglish (Hindi written in Roman English alphabet). For example, translate 'I am talking to you' to 'Main abhi tumse baat kar raha hu'. Do NOT use the Devanagari script (like 'मैं', 'तुम'). Only output the translated Hinglish text and nothing else."
 """
         else:
-            # Default English Prompt
             cfg = """gpt3.5:
   temperature: 0.3
   prompt_template: "Translate to English: "
@@ -80,25 +82,26 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
         out, _ = await proc.communicate()
         log = out.decode('utf-8', errors='ignore')
+        last_log = log
 
         cnt = 0
         if os.path.exists(output_dir):
             for r,_,fs in os.walk(output_dir):
                 cnt += len([f for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
 
-        print(f"Return code {proc.returncode}, images: {cnt}")
+        print(f"Return code {proc.returncode}, images generated: {cnt}")
 
         if proc.returncode == 0 and cnt > 0:
             return True, "GEMINI", log
         else:
-            if is_limit_error(log) or "invalid" in log.lower():
-                print(f"Rate Limit or Invalid Key on Gemini. Shifting to next key...")
-                continue
+            if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower():
+                print(f"Key LIMIT / DEAD. Shifting to next API key...")
+                continue # Limit khatam? Agli key try karega
             else:
-                print(f"Translation Error: {log[-800:]}")
+                print(f"Unknown Translation Error. Shifting anyway... {log[-400:]}")
                 continue
 
-    return False, "Failed", "All Gemini API keys exhausted or rate limited."
+    return False, "Failed", last_log
 
 async def main():
     if not FILE_ID: return
@@ -157,8 +160,10 @@ async def main():
 
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
+    # Agar OK nahi hai (Matlab sari keys check kar li aur sab fail)
     if not ok:
-        await edit(f"⚠️ **Translation Failed/Keys Exhausted!**\n```{full_log[-1000:]}```")
+        fail_msg = f"⚠️ **Sabki limit khatam ho gayi hai!**\n\n😔 Saari Gemini APIs exhaust ho chuki hain.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-200:]}`"
+        await edit(fail_msg)
         return await bot.stop()
 
     await edit(f"🎨 **Done with {provider_msg}** - Uploading...")
