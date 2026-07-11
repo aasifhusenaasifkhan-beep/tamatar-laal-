@@ -5,6 +5,7 @@ import shutil
 import asyncio
 import json
 import threading
+import time
 import urllib.request
 import urllib.error
 from pyrogram import Client
@@ -48,14 +49,14 @@ def mask_key(key):
     return f"...{key[-4:]}" if len(key) > 6 else "***"
 
 # =================================================================
-# 🚀 NATIVE GEMINI ADAPTER + AUTO MODEL FINDER (THE ULTIMATE FIX)
+# 🚀 NATIVE GEMINI ADAPTER + 15RPM FIX DYNAMIC SWAP / SLEEP CACHE
 # =================================================================
 PROXY_PORT = 11434
 CURRENT_GEMINI_KEY = ""
 
 class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass # Logs hide karega
+        pass # Logs hide karega taaki 60 seconds wale debugs dikhen
 
     def do_GET(self):
         self.send_response(200)
@@ -68,6 +69,9 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(mock_data).encode('utf-8'))
 
     def do_POST(self):
+        global CURRENT_GEMINI_KEY
+        global GEMINI_KEYS
+        
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
         
@@ -94,39 +98,71 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             
             gemini_body = json.dumps(gemini_payload).encode('utf-8')
             
-            # 💡 SMART FALLBACK: Google API Models! Try them sequentially until one hits!
+            # Smart Models loop
             models_to_try = [
+                "gemini-2.0-flash",
                 "gemini-1.5-flash-latest", 
-                "gemini-2.0-flash", 
-                "gemini-2.5-flash",
                 "gemini-1.5-pro-latest",
                 "gemini-1.5-flash"
             ]
             
-            gemini_resp = None
+            # API Rotating Database Setup (Bina toke Swap hone wala list)
+            key_pool = GEMINI_KEYS.copy()
+            if CURRENT_GEMINI_KEY in key_pool:
+                key_pool.remove(CURRENT_GEMINI_KEY)
+            key_pool.insert(0, CURRENT_GEMINI_KEY) # Jo loop assign krega o primary rhega
+            
+            success = False
             last_err_body = None
             last_code = 500
             
-            # Yaha Loop Try karega Models ko 1 by 1 bina user ko Error dikhaye
-            for model_name in models_to_try:
-                url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={CURRENT_GEMINI_KEY}'
-                req = urllib.request.Request(url, data=gemini_body, method='POST')
-                req.add_header('Content-Type', 'application/json')
+            # Dyanmic Retries according to API count
+            max_limit_retries = max(2, len(GEMINI_KEYS) * 2) 
+
+            for attempt in range(max_limit_retries):
+                active_key = key_pool[attempt % len(key_pool)]
                 
-                try:
-                    with urllib.request.urlopen(req) as response:
-                        resp_body = response.read()
-                        gemini_resp = json.loads(resp_body)
-                        break # SUCCESS! Loop stop ho jayega
-                except urllib.error.HTTPError as e:
-                    last_err_body = e.read()
-                    last_code = e.code
-                    if e.code == 404:
-                        continue # Model not found! Koi na, Agla try karo!
+                for model_name in models_to_try:
+                    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}'
+                    req = urllib.request.Request(url, data=gemini_body, method='POST')
+                    req.add_header('Content-Type', 'application/json')
+                    
+                    try:
+                        with urllib.request.urlopen(req) as response:
+                            resp_body = response.read()
+                            gemini_resp = json.loads(resp_body)
+                            success = True
+                            CURRENT_GEMINI_KEY = active_key
+                            break # Success mili model block tod do 🥷 
+                    except urllib.error.HTTPError as e:
+                        last_code = e.code
+                        last_err_body = e.read()
+                        
+                        if last_code == 404: 
+                            continue # Model name missing, Next model pakdo!
+                        else:
+                            break # Limit (429) , shift completely
+                
+                if success:
+                    break
+                    
+                if last_code == 429: # THE MONSTER BUSTER (15 REQUEST PER MINUTE HIT)
+                    if len(key_pool) > 1:
+                        # KEY ROTATION: Dusri key pr daal do speed se.
+                        print(f"🔄 SPEED LIMIT HIT (429)! Active API exhausted. Swapping to next API...")
+                        time.sleep(2)
+                        continue
                     else:
-                        break # Limit ya API Dead error, yahi break karo.
+                        # SUPER SLEEP CACHE: Single API account rukega aur agle minute resume karega
+                        print("⏳ GEMINI FREE QUOTA EXHAUSTED (15 RPM) Hit on single API! Proxy falling asleep for 60 seconds to bypass ban 🛌...")
+                        time.sleep(60.0)
+                        print("🚀 CoolDown Finished. Let's strike it again!")
+                        continue
+                else: 
+                     break # Stop checking for Bad requests (400, 500)
             
-            if not gemini_resp:
+            # --- AGAR RETURN ME TRANSTLATION MILGYA HAI ---        
+            if not success:
                 self.send_response(last_code)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -138,10 +174,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             except (KeyError, IndexError):
                 translated_text = ""
             
+            # Translataion ko wapas old style open AI library ke liye wrap bna lo!
             openai_resp = {
-                "id": "chatcmpl-native-gemini",
+                "id": "chatcmpl-native-gemini-bypasser",
                 "object": "chat.completion",
-                "created": 1234567890,
+                "created": int(time.time()),
                 "model": "gpt-3.5-turbo",
                 "choices": [{
                     "index": 0,
@@ -165,9 +202,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
+# FAKE SERVER STARTED BACKDOOR
 server = ThreadingHTTPServer(('127.0.0.1', PROXY_PORT), ProxyHTTPRequestHandler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 # =================================================================
+
 
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
     global CURRENT_GEMINI_KEY
@@ -179,8 +218,9 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
 
+    # Primary outer loop inisiliasatiion bas first priority sets krne k lia.
     for idx, api_key in enumerate(GEMINI_KEYS):
-        print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
+        print(f"[{idx+1}/{len(GEMINI_KEYS)}] Kicking Translation with PRIMARY GEMINI API (Key: {mask_key(api_key)})")
         
         CURRENT_GEMINI_KEY = api_key
         
@@ -228,13 +268,14 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
             return True, "GEMINI", log
         else:
             if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower():
-                print(f"Key LIMIT / DEAD. Shifting to next API key...")
+                print(f"Global Shift Trigerred. Retrying...")
                 continue
             else:
-                print(f"Translation Error. Shifting anyway... \n{log[-400:]}")
+                print(f"Translation Crash Failure... \n{log[-400:]}")
                 continue
 
     return False, "Failed", last_log
+
 
 async def main():
     if not FILE_ID: return
@@ -288,17 +329,17 @@ async def main():
         await edit("❌ No images inside zip")
         return await bot.stop()
 
-    lang_display = "Hindi (Roman / Hinglish)" if LANG == "hienglish" else "English"
-    await edit(f"🔄 **AI Translating** {len(pages)} panels | {lang_display} | Gemini API")
+    lang_display = "Hinglish (Official)" if LANG == "hienglish" else "English"
+    await edit(f"🔄 **AI Translating** {len(pages)} panels | {lang_display} | Gemini Dynamic-Proxy API Mode ✨")
 
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
     if not ok:
-        fail_msg = f"⚠️ **Translation Error / Limit Exhausted:**\n\n😔 Sab koshish fail ho gayi.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-300:]}`"
+        fail_msg = f"⚠️ **Daily Limits Crushed / Invalid Account:**\n\n😔 Saari techniques fail ho gayi. APi change kro.\n\n_Logs:_ `{full_log[-300:]}`"
         await edit(fail_msg)
         return await bot.stop()
 
-    await edit(f"🎨 **Done with {provider_msg}** - Uploading...")
+    await edit(f"🎨 **Done Process Complete** | Repacking Archive...")
 
     files = sorted([os.path.join(r,f) for r,_,fs in os.walk(out) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
     
@@ -317,7 +358,7 @@ async def main():
         await edit(f"❌ **File too big {file_size_mb:.1f} MB** > 2GB Telegram limit")
         return await bot.stop()
 
-    caption = f"✅ **Done! [Gemini]** 🌐 {lang_display} | {STYLE}"
+    caption = f"✅ **Done! [Gemini Force Override]** 🌐 {lang_display} | {STYLE}"
     try:
         await bot.send_document(CHAT_ID, final_file, caption=caption)
         try: await bot.delete_messages(CHAT_ID, MSG_ID)
