@@ -1,0 +1,71 @@
+name: Manga Translation Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_id: { required: true }
+      chat_id: { required: true }
+      msg_id: { required: true }
+      user_id: { required: true }
+      lang: { required: true }
+      style: { required: true }
+      fname: { required: true }
+      gemini_keys: { required: true }
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Cache PyPI and Manga Models
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/pip
+            manga-image-translator/models
+          key: ${{ runner.os }}-manga-cache
+          restore-keys: |
+            ${{ runner.os }}-manga-
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libglib2.0-0 build-essential libeigen3-dev zip
+          
+      - name: Setup Translator
+        run: |
+          if [ ! -d "manga-image-translator" ]; then
+            git clone https://github.com/zyddnys/manga-image-translator.git
+            cd manga-image-translator
+            git checkout $(git rev-list -n 1 --before="2024-03-01" HEAD)
+            cd ..
+          fi
+          pip install --no-cache-dir "Cython==0.29.36" "numpy==1.26.4" "setuptools==68.2" wheel
+          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir --no-build-isolation git+https://github.com/lucasb-eyer/pydensecrf.git
+          pip install -r manga-image-translator/requirements.txt
+          pip install pyrogram tgcrypto Pillow anyascii pymupdf openai google-generativeai
+          pip install "httpx==0.13.3" "httpcore==0.9.1" "h11==0.9.0" "h2==3.2.0" "sniffio==1.2.0" --force-reinstall
+        
+      - name: Run Worker
+        env:
+          FILE_ID: ${{ github.event.inputs.file_id }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          MSG_ID: ${{ github.event.inputs.msg_id }}
+          USER_ID: ${{ github.event.inputs.user_id }}
+          LANG: ${{ github.event.inputs.lang }}
+          STYLE: ${{ github.event.inputs.style }}
+          FNAME: ${{ github.event.inputs.fname }}
+          gemini_keys: ${{ github.event.inputs.gemini_keys }}
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          python worker.py
