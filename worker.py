@@ -3,6 +3,7 @@ import sys
 import zipfile
 import shutil
 import asyncio
+import re  # NAYA IMPORT DEEP PATCH KE LIYE
 from pyrogram import Client
 import pyrogram.utils
 
@@ -52,34 +53,41 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
 
-    # 🚀 MAGIC PATCH: Forcefully change Library's hardcoded model to Gemini
-    translator_file = os.path.join(cwd_dir, "manga_translator", "translators", "gpt3.py") if cwd_dir else None
-    if translator_file and os.path.exists(translator_file):
-        try:
-            with open(translator_file, "r", encoding="utf-8") as tf:
-                t_content = tf.read()
-            # Replace GPT models with Gemini model name so Gemini doesn't give 404 Not Found
-            t_content = t_content.replace("gpt-3.5-turbo", "gemini-1.5-flash")
-            with open(translator_file, "w", encoding="utf-8") as tf:
-                tf.write(t_content)
-            print("✅ Library forcefully patched for Gemini 1.5 Flash Support!")
-        except Exception as e:
-            print(f"⚠️ Could not patch Library: {e}")
+    # 🚀 MAGIC PATCH V2: Deep Regex Replace to fix "NOT_FOUND" (GPT -> Gemini)
+    if cwd_dir:
+        trans_dir = os.path.join(cwd_dir, "manga_translator", "translators")
+        if os.path.exists(trans_dir):
+            for filename in os.listdir(trans_dir):
+                if filename.endswith(".py"):
+                    filepath = os.path.join(trans_dir, filename)
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    
+                    # Chahe gpt-3.5-turbo-0125 ho, ya gpt-4, sabko forcibly 'gemini-1.5-flash' bana dega
+                    new_text = re.sub(r'gpt-3\.5-turbo[-A-Za-z0-9]*', 'gemini-1.5-flash', text)
+                    new_text = re.sub(r'gpt-4[-A-Za-z0-9]*', 'gemini-1.5-flash', new_text)
+                    
+                    if new_text != text:
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(new_text)
+                        print(f"✅ MAGIC PATCH: Library Updated to Gemini in {filename}")
 
     for idx, api_key in enumerate(GEMINI_KEYS):
         print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
         
+        # Purane environment variables clear karna
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
 
+        # Official Gemini OpenAI Compatibility endpoint set karna
         os.environ["OPENAI_API_KEY"] = api_key
-        os.environ["OPENAI_API_BASE"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
-        os.environ["OPENAI_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
+        os.environ["OPENAI_API_BASE"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        os.environ["OPENAI_BASE_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
         gpt_config_path = os.path.join(workspace, "gpt_config.yml")
         
-        # Explicitly added model: "gemini-1.5-flash" here as well
+        # Double Protection: Config me bhi 'gemini-1.5-flash' model pass karna
         if LANG == "hienglish":
             cfg = """gpt3.5:
   model: "gemini-1.5-flash"
@@ -119,11 +127,12 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         if proc.returncode == 0 and cnt > 0:
             return True, "GEMINI", log
         else:
+            # Agar limit khatam, API invalid, ya Google API ban error aaye toh shift karega
             if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower() or "not_found" in log.lower():
                 print(f"Key LIMIT / DEAD / 404 Error. Shifting to next API key...")
                 continue
             else:
-                print(f"Translation Error. Shifting anyway... {log[-400:]}")
+                print(f"Translation Error. Shifting anyway... \n{log[-400:]}")
                 continue
 
     return False, "Failed", last_log
@@ -186,7 +195,7 @@ async def main():
     ok, provider_msg, full_log = await run_translator_with_fallback(inp, out, ws)
 
     if not ok:
-        fail_msg = f"⚠️ **Sabki limit khatam ho gayi hai!**\n\n😔 Saari Gemini APIs exhaust ho chuki hain.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-200:]}`"
+        fail_msg = f"⚠️ **Sabki limit khatam ho gayi hai!**\n\n😔 Saari Gemini APIs exhaust ho chuki hain.\n\n🕐 **Nayi API `/addapi` se daalo ya kal aana!**\n\n_Logs:_ `{full_log[-300:]}`"
         await edit(fail_msg)
         return await bot.stop()
 
