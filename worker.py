@@ -25,7 +25,6 @@ GEMINI_KEYS = [k.strip() for k in os.getenv("gemini_keys", "").split(",") if k.s
 print(f"=== START LANG:{LANG} FILE:{FNAME} ===")
 print(f"KEYS RECEIVED FROM HF DB: {len(GEMINI_KEYS)}")
 
-# 👇 NAYA CHECK (Taki Invalid Token pe sidha reason bata de) 👇
 if not BOT_TOKEN or len(BOT_TOKEN) < 10:
     print("❌ CRITICAL ERROR: BOT_TOKEN is missing or invalid in GitHub Secrets!")
     sys.exit(1)
@@ -53,6 +52,20 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     last_log = ""
 
+    # 🚀 MAGIC PATCH: Forcefully change Library's hardcoded model to Gemini
+    translator_file = os.path.join(cwd_dir, "manga_translator", "translators", "gpt3.py") if cwd_dir else None
+    if translator_file and os.path.exists(translator_file):
+        try:
+            with open(translator_file, "r", encoding="utf-8") as tf:
+                t_content = tf.read()
+            # Replace GPT models with Gemini model name so Gemini doesn't give 404 Not Found
+            t_content = t_content.replace("gpt-3.5-turbo", "gemini-1.5-flash")
+            with open(translator_file, "w", encoding="utf-8") as tf:
+                tf.write(t_content)
+            print("✅ Library forcefully patched for Gemini 1.5 Flash Support!")
+        except Exception as e:
+            print(f"⚠️ Could not patch Library: {e}")
+
     for idx, api_key in enumerate(GEMINI_KEYS):
         print(f"[{idx+1}/{len(GEMINI_KEYS)}] Trying GEMINI API (Key: {mask_key(api_key)})")
         
@@ -66,14 +79,17 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 
         gpt_config_path = os.path.join(workspace, "gpt_config.yml")
         
+        # Explicitly added model: "gemini-1.5-flash" here as well
         if LANG == "hienglish":
             cfg = """gpt3.5:
+  model: "gemini-1.5-flash"
   temperature: 0.3
   prompt_template: "Translate to Hinglish: "
   chat_system_template: "You are a professional manga translator. You MUST translate the text into Hinglish (Hindi written in Roman English alphabet). For example, translate 'I am talking to you' to 'Main abhi tumse baat kar raha hu'. Do NOT use the Devanagari script (like 'मैं', 'तुम'). Only output the translated Hinglish text and nothing else."
 """
         else:
             cfg = """gpt3.5:
+  model: "gemini-1.5-flash"
   temperature: 0.3
   prompt_template: "Translate to English: "
   chat_system_template: "You are a professional manga translator. Accurately translate the text to natural-sounding English."
@@ -103,8 +119,8 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
         if proc.returncode == 0 and cnt > 0:
             return True, "GEMINI", log
         else:
-            if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower():
-                print(f"Key LIMIT / DEAD. Shifting to next API key...")
+            if is_limit_error(log) or "invalid" in log.lower() or "unauthorized" in log.lower() or "not_found" in log.lower():
+                print(f"Key LIMIT / DEAD / 404 Error. Shifting to next API key...")
                 continue
             else:
                 print(f"Translation Error. Shifting anyway... {log[-400:]}")
