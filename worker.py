@@ -117,10 +117,10 @@ class HumanInterventionTranslator(CommonTranslator):
             "4️⃣ Resend updated document cleanly back to bot to trigger Engine Continuation Render! (Waiting Timeout ~12 Mins)"
         )
         
-        # Fixed: Send directly to User's PM using raw Telegram HTTP API (0% Pyrogram session issues!)
+        # Send directly to User's PM using raw Telegram HTTP API (0% Pyrogram session issues!)
         self.send_subtitles_via_http(xport_nm, dirctn)
         
-        # Fixed: Update status on Group status message via raw HTTP (0% BotMethodInvalid errors!)
+        # Update status on Group status message via raw HTTP (0% BotMethodInvalid errors!)
         self.update_status_via_http(self.draw_bar(50, "Extracted! Text file delivered to user's PM. Waiting for translation..."))
 
         translated_layer_dump = [raw for raw in queries] 
@@ -188,7 +188,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     os.environ["ENV_MSG_ID"] = str(MSG_ID)
     os.environ["ENV_REPO_NAME"] = str(REPO_NAME)
 
-    # Fixed: Overwrite 'chatgpt.py' because library uses it internally
+    # Overwrite 'chatgpt.py' because library uses it internally
     if cwd_dir:
         core_lib_node = os.path.join(cwd_dir, "manga_translator", "translators", "chatgpt.py")
         if os.path.exists(os.path.dirname(core_lib_node)):
@@ -198,7 +198,9 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     
-    cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "ENG"] + style_flags
+    # FIXED BYPASS: Change target language from "ENG" to "FRA" (French)
+    # This prevents the library from filtering out already English dialogues, while preserving horizontal Latin layout & fonts.
+    cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "FRA"] + style_flags
     
     if os.path.exists(output_dir): 
         shutil.rmtree(output_dir)
