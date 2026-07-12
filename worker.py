@@ -45,6 +45,10 @@ from pyrogram import Client
 from .common import CommonTranslator
 
 class HumanInterventionTranslator(CommonTranslator):
+    # Defining standard supported languages list to prevent LanguageUnsupportedException
+    supported_src_languages = ['auto', 'ENG', 'JPN', 'CHS', 'CHT', 'KOR', 'FRA', 'DEU', 'RUS', 'SPA', 'ITA', 'POR', 'TRK', 'VIE', 'NLD', 'PLK', 'UKR', 'ARA', 'THA', 'IND', 'FIL']
+    supported_target_languages = ['auto', 'ENG', 'JPN', 'CHS', 'CHT', 'KOR', 'FRA', 'DEU', 'RUS', 'SPA', 'ITA', 'POR', 'TRK', 'VIE', 'NLD', 'PLK', 'UKR', 'ARA', 'THA', 'IND', 'FIL']
+
     def __init__(self, *args, **kwargs):
         # Base constructor initialization without hitting external API triggers
         super().__init__(*args, **kwargs)
@@ -55,6 +59,10 @@ class HumanInterventionTranslator(CommonTranslator):
         self.chat_id = int(os.environ.get("ENV_CHAT_ID", "0"))
         self.msg_id = int(os.environ.get("ENV_MSG_ID", "0"))
         self.chk_chn = -1003700822969
+
+    # Forcefully bypass translator level language verification checks
+    def supports_languages(self, from_lang, to_lang, fatal=False):
+        return True
 
     async def _translate(self, from_lang, to_lang, queries, *args, **kwargs):
         return await self.do_custom_workflow(queries)
