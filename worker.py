@@ -7,7 +7,7 @@ import time
 from pyrogram import Client
 import pyrogram.utils
 
-# Pyrogram Utils Interception
+# Pyrogram Utils Interception in main process
 pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 FILE_ID = os.getenv("FILE_ID", "").strip()
@@ -42,7 +42,11 @@ import os
 import asyncio
 import time
 from pyrogram import Client
+import pyrogram.utils
 from .common import CommonTranslator
+
+# Monkeypatch Peer ID inside the subprocess
+pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 class HumanInterventionTranslator(CommonTranslator):
     # Defining standard supported languages list to prevent LanguageUnsupportedException
