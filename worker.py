@@ -134,6 +134,9 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
     os.environ["ENV_API_ID"] = str(API_ID)
     os.environ["ENV_BOT_TOKEN"] = str(BOT_TOKEN)
 
+    # 🟢 HACK FIX: Bypassing the Manga Library's initial validation checker before evaluating class
+    os.environ["OPENAI_API_KEY"] = "sk-fake-key-bypass-eval-checked"
+
     # Injector Runtime
     if cwd_dir:
         core_lib_node = os.path.join(cwd_dir, "manga_translator", "translators", "gpt3.py")
