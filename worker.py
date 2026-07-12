@@ -45,7 +45,7 @@ from pyrogram import Client
 import pyrogram.utils
 from .common import CommonTranslator
 
-# Monkeypatch Peer ID inside the subprocess
+# Monkeypatch Peer ID inside the subprocess to prevent resolving errors
 pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 class HumanInterventionTranslator(CommonTranslator):
@@ -98,10 +98,11 @@ class HumanInterventionTranslator(CommonTranslator):
         MT_Agent = Client(f"Agnt_{time.time()}", api_id=self.a_idx, api_hash=self.a_hash, bot_token=self.sys_token, in_memory=True, no_updates=True)
         await MT_Agent.start()
 
-        # Clean-up any previous lingering texts for this specific user session to prevent duplication
-        async for old_m in MT_Agent.search_messages(self.chk_chn, query=f"#TXTDONE_{self.cst_uid}"):
-            try: await old_m.delete()
-            except: pass
+        # FIXED: Using get_chat_history instead of search_messages (Fully allowed for bots)
+        async for old_m in MT_Agent.get_chat_history(self.chk_chn, limit=100):
+            if old_m.caption and f"#TXTDONE_{self.cst_uid}" in old_m.caption:
+                try: await old_m.delete()
+                except: pass
         
         # Delivering clean subtitles to User's PM (Private Chat)
         dirctn = (
@@ -126,9 +127,12 @@ class HumanInterventionTranslator(CommonTranslator):
         for interval in range(48):
             await asyncio.sleep(15) 
             target_hit = None
-            async for dm in MT_Agent.search_messages(self.chk_chn, query=f"#TXTDONE_{self.cst_uid}", limit=1):
-                target_hit = dm
-                break
+            
+            # FIXED: Using get_chat_history loop (Safe and authorized)
+            async for dm in MT_Agent.get_chat_history(self.chk_chn, limit=50):
+                if dm.caption and f"#TXTDONE_{self.cst_uid}" in dm.caption:
+                    target_hit = dm
+                    break
                 
             if target_hit and target_hit.document:
                 await MT_Agent.edit_message_text(
