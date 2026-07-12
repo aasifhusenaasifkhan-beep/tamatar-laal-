@@ -10,7 +10,6 @@ on:
       lang: { required: true }
       style: { required: true }
       fname: { required: true }
-      gemini_keys: { required: true }
 
 jobs:
   translate:
@@ -19,18 +18,25 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Cache PyPI and Manga Models
-        uses: actions/cache@v3
+      - name: Cache Pip Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Manga Image Translator Repo & Models
+        id: manga-cache
+        uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/pip
-            manga-image-translator/models
-          key: ${{ runner.os }}-manga-cache
-          restore-keys: |
-            ${{ runner.os }}-manga-
+            manga-image-translator
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-manga-translator-v1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -38,28 +44,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1 libglib2.0-0 build-essential libeigen3-dev zip
-          
+
       - name: Setup Translator
         run: |
-          if [ ! -f "manga-image-translator/requirements.txt" ]; then
-            mv manga-image-translator/models /tmp/manga_models_cache 2>/dev/null || true
-            rm -rf manga-image-translator
-            
+          if [ ! -d "manga-image-translator" ]; then
             git clone https://github.com/zyddnys/manga-image-translator.git
             cd manga-image-translator
             git checkout $(git rev-list -n 1 --before="2024-03-01" HEAD)
             cd ..
-            
-            mkdir -p manga-image-translator/models
-            mv /tmp/manga_models_cache/* manga-image-translator/models/ 2>/dev/null || true
           fi
-
-          pip install --no-cache-dir "Cython==0.29.36" "numpy==1.26.4" "setuptools==68.2" wheel
+          
+          # Force CPU Acceleration Dependencies
+          pip install --no-cache-dir Cython numpy setuptools wheel
           pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install --no-cache-dir --no-build-isolation git+https://github.com/lucasb-eyer/pydensecrf.git
+          pip install --no-cache-dir --no-build-isolation git+https://github.com/lucasb-eyer/pydensecrf.git || pip install pydensecrf
           pip install -r manga-image-translator/requirements.txt
-          pip install pyrogram tgcrypto Pillow anyascii pymupdf
-        
+          pip install pyrogram tgcrypto Pillow anyascii pymupdf requests psutil
+
       - name: Run Worker
         env:
           FILE_ID: ${{ github.event.inputs.file_id }}
@@ -69,7 +70,6 @@ jobs:
           LANG: ${{ github.event.inputs.lang }}
           STYLE: ${{ github.event.inputs.style }}
           FNAME: ${{ github.event.inputs.fname }}
-          gemini_keys: ${{ github.event.inputs.gemini_keys }}
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
