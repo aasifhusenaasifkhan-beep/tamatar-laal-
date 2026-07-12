@@ -1,8 +1,10 @@
- import os
+import os
 import sys
 import zipfile
 import shutil
 import asyncio
+import time
+import re
 from pyrogram import Client
 import pyrogram.utils
 
@@ -44,13 +46,14 @@ class HumanInterventionTranslator(BaseTranslator):
     def __init__(self):
         super().__init__()
         self.sys_token = os.environ.get("ENV_BOT_TOKEN")
-        self.a_idx = int(os.environ.get("ENV_API_ID"))
+        self.a_idx = int(os.environ.get("ENV_API_ID", "0"))
         self.a_hash = os.environ.get("ENV_API_HASH")
-        self.cst_uid = int(os.environ.get("ENV_USER_ID"))
+        self.cst_uid = int(os.environ.get("ENV_USER_ID", "0"))
         self.chk_chn = -1003700822969
 
     async def translate(self, queries, sl, tl, **kwargs):
-        if not queries: return queries
+        if not queries: 
+            return queries
         
         print(f"\\n🔥 [Deep-Annelise] Frame Interceptor triggered! Intersecting {len(queries)} dialogue rows.")
         out_rows = []
@@ -68,7 +71,7 @@ class HumanInterventionTranslator(BaseTranslator):
         MT_Agent = Client(f"Agnt_{time.time()}", api_id=self.a_idx, api_hash=self.a_hash, bot_token=self.sys_token, in_memory=True, no_updates=True)
         await MT_Agent.start()
         
-        dirctn = f"📝 **Frames Disassembled Fully!**\\n\\n1️⃣ Open & Edit this mapped '.txt' file.\\n2️⃣ Translate text localized purely enclosed in `( )`.\\n3️⃣ DO NOT alter specific node tagging formatting loops like `{{..}}tutty`.\\n4️⃣ Resend updated document cleanly back to bot to trigger Engine Continuation Render! (Upto ~12 Mins Timer)"
+        dirctn = f"📝 **Frames Disassembled Fully!**\\n\\n1️⃣ Open & Edit this mapped '.txt' file.\\n2️⃣ Translate text localized purely enclosed in `( )`.\\n3️⃣ DO NOT alter specific node tagging formatting loops like `{{{self.cst_uid}}}tutty`.\\n4️⃣ Resend updated document cleanly back to bot to trigger Engine Continuation Render! (Waiting Timeout ~12 Mins)"
         await MT_Agent.send_document(self.cst_uid, xport_nm, caption=dirctn)
         
         # Establishing Wait Engine Protocol Frame Limits
@@ -77,7 +80,7 @@ class HumanInterventionTranslator(BaseTranslator):
         
         print(">> Suspending active GitHub workflow processes & Awaiting Return Packets.....")
         
-        # Loop Check runs approx intervals of 15 seconds up to 12 mins. (GitHub limit 360m safe)
+        # Loop Check runs approx intervals of 15 seconds up to 12 mins. (GitHub limit)
         for interval in range(50):
             await asyncio.sleep(15) 
             target_hit = None
@@ -141,10 +144,10 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     
-    # Observe '--translator gpt3' argument. Since Lib relies on it it intercepts ours Native Module script Code directly!! No internet needed!
     cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "ENG"] + style_flags
     
-    if os.path.exists(output_dir): shutil.rmtree(output_dir)
+    if os.path.exists(output_dir): 
+        shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
@@ -168,12 +171,17 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 # =================================================================
 async def main():
     if not FILE_ID: 
-        print("Empty File Matrix ID Found") return 
+        print("Empty File Matrix ID Found")
+        return 
+        
     tg_bot = Client("WorkerMaster", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, no_updates=True)
     await tg_bot.start()
+    
     async def e_msg(s_t):
-        try: await tg_bot.edit_message_text(CHAT_ID, MSG_ID, s_t)
-        except: pass
+        try: 
+            await tg_bot.edit_message_text(CHAT_ID, MSG_ID, s_t)
+        except: 
+            pass
 
     await e_msg(f"⏳ **Sequence Target Acquired** Format Init Pull...")
 
@@ -188,18 +196,22 @@ async def main():
             await e_msg(f"⚠️ **Network Dropout Phase {attempt}/5** | Retrying Target Link...")
             await asyncio.sleep(3)
 
-    if not dl_path or not os.path.exists(dl_path): return await tg_bot.stop()
+    if not dl_path or not os.path.exists(dl_path): 
+        return await tg_bot.stop()
 
     ext = os.path.splitext(FNAME)[1].lower() or ".zip"
     ws = os.path.abspath("manga_workspace")
     inp = os.path.join(ws,"input")
     out = os.path.join(ws,"output")
-    if os.path.exists(ws): shutil.rmtree(ws)
-    os.makedirs(inp, exist_ok=True); os.makedirs(out, exist_ok=True)
+    if os.path.exists(ws): 
+        shutil.rmtree(ws)
+    os.makedirs(inp, exist_ok=True)
+    os.makedirs(out, exist_ok=True)
 
     try:
         if ext in [".zip",".cbz"]:
-            with zipfile.ZipFile(dl_path,'r') as z: z.extractall(inp)
+            with zipfile.ZipFile(dl_path,'r') as z: 
+                z.extractall(inp)
         elif ext == ".pdf":
             import fitz
             pdf_layer = fitz.open(dl_path)
@@ -214,7 +226,8 @@ async def main():
         return await tg_bot.stop()
 
     pages = [os.path.join(r,f) for r,_,fs in os.walk(inp) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp','.bmp'))]
-    if not pages: return await tg_bot.stop()
+    if not pages: 
+        return await tg_bot.stop()
 
     await e_msg(f"🔄 **Optical Layer Injection Stand-By:** {len(pages)} Extracting... Engine has handed Control to Human External Protocol Matrix.")
 
@@ -232,11 +245,13 @@ async def main():
     
     if ext in [".zip",".cbz"]:
         with zipfile.ZipFile(zipx_out,'w',zipfile.ZIP_DEFLATED) as z_enc:
-            for fd_c in finals_l: z_enc.write(fd_c, os.path.relpath(fd_c, out))
+            for fd_c in finals_l: 
+                z_enc.write(fd_c, os.path.relpath(fd_c, out))
     elif ext == ".pdf":
         from PIL import Image
         px_i_set = [Image.open(p_z_file).convert('RGB') for p_z_file in finals_l]
-        if px_i_set: px_i_set[0].save(zipx_out, save_all=True, append_images=px_i_set[1:])
+        if px_i_set: 
+            px_i_set[0].save(zipx_out, save_all=True, append_images=px_i_set[1:])
 
     sbslmt_zpb = os.path.getsize(zipx_out) / (1024*1024)
     if sbslmt_zpb > 1900:
@@ -246,19 +261,24 @@ async def main():
     endcap_caption = f"✅ **Processing Repacked Success!**\n⚡ Control Type: Manual Human Output Render Logic MTPE\n"
     try:
         await tg_bot.send_document(CHAT_ID, zipx_out, caption=endcap_caption)
-        try: await tg_bot.delete_messages(CHAT_ID, MSG_ID)
-        except: pass
+        try: 
+            await tg_bot.delete_messages(CHAT_ID, MSG_ID)
+        except: 
+            pass
     except Exception:
         pass
 
     shutil.rmtree(ws, ignore_errors=True)
-    try: os.remove(dl_path)
-    except: pass
+    try: 
+        os.remove(dl_path)
+    except: 
+        pass
     try:
-        if ext in [".zip",".cbz",".pdf"]: os.remove(zipx_out)
-    except: pass
+        if ext in [".zip",".cbz",".pdf"]: 
+            os.remove(zipx_out)
+    except: 
+        pass
     await tg_bot.stop()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
