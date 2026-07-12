@@ -1,4 +1,4 @@
-import os
+ import os
 import sys
 import zipfile
 import shutil
@@ -6,7 +6,7 @@ import asyncio
 from pyrogram import Client
 import pyrogram.utils
 
-# Pyrogram Core By-Pass
+# Pyrogram Utils Interception
 pyrogram.utils.get_peer_type = lambda p: "channel" if str(p).startswith("-100") else "chat" if str(p).startswith("-") else "user"
 
 FILE_ID = os.getenv("FILE_ID", "").strip()
@@ -20,131 +20,128 @@ FNAME = os.getenv("FNAME", "translated_manga.zip").strip()
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-GEMINI_KEYS_STR = os.getenv("gemini_keys", "")
 
-GEMINI_KEYS = [k.strip() for k in GEMINI_KEYS_STR.split(",") if k.strip()]
-
-print(f"=== DEEP-ANNELISE START [LANG: {LANG}] | FILE: {FNAME} ===")
-print(f"✅ FORK/INJECTION INITIALIZED | ACTIVE KEYS: {len(GEMINI_KEYS)}\n")
-
-if not BOT_TOKEN or len(BOT_TOKEN) < 10 or not API_ID:
-    print("❌ CRITICAL ERROR: GitHub Secrets (API_ID, BOT_TOKEN) missing. Translation Terminated!")
+print(f"=== DEEP-ANNELISE MANUAL MTPE [LANG: {LANG}] | USER MAPPED: {USER_ID} ===")
+if not BOT_TOKEN or not API_ID:
+    print("❌ CRITICAL ERROR: GitHub Secrets parameters missing!")
     sys.exit(1)
 
-# =================================================================
-# 🧬 1. THE NATIVE FORK INJECTOR CODE (HACKS THE LIBRARY AT RUNTIME)
-# Yeh Python script runtime pe "manga_translator/translators/gpt3.py" 
-# ko poori tarah udaa ke ye naya "Gemini Native" code wahan bitha dega.
-# =================================================================
 
-CUSTOM_GEMINI_NATIVE_PLUGIN = """
+# =========================================================================================
+# 🧬 1. HUMAN INTERVENTION INJECTION SHELL 
+# Humare python Github Environment mein yeh script "manga_translator" k under bypass chipkayga
+# ==========================================================================================
+
+ROUTINE_SCRIPT_BYPASSER = """
 import os
+import re
 import asyncio
-import aiohttp
-import json
+import time
+from pyrogram import Client
 from .base import BaseTranslator
 
-class UltimateGeminiFork(BaseTranslator):
+class HumanInterventionTranslator(BaseTranslator):
     def __init__(self):
         super().__init__()
-        # Import keys gracefully mapped from the Worker environment!
-        keys_pool = os.getenv("ENV_GEMINI_POOL", "")
-        self.keys = [k.strip() for k in keys_pool.split(",") if k.strip()]
-        self.target_lang = os.getenv("ENV_LANG_SET", "english").lower()
-        self.k_index = 0
-        self.thread_lock = asyncio.Lock()
-        
-    async def request_google(self, text, auth_session, attempt=0):
-        # Backup safe exit
-        if not self.keys: return text
-        if attempt >= max(3, len(self.keys) * 2): return text
-        
-        # Atomically pulling 1 Key dynamically from available
-        async with self.thread_lock:
-            active_key = self.keys[self.k_index % len(self.keys)]
-            self.k_index += 1
-            
-        # Target latest highly effective flash versions 
-        node_str = "gemini-2.0-flash" if attempt % 2 == 0 else "gemini-1.5-flash"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{node_str}:generateContent?key={active_key}"
-        
-        # Hardcoding the prompt logic into the very depth of the library 
-        if "hienglish" in self.target_lang:
-            instruct = "You are a professional manga translator. Translate everything exactly into HINGLISH. This means Hindi language spoken naturally but written perfectly in ENGLISH ROMAN ALPHABETS ONLY! DO NOT USE DEVANAGARI whatsoever. Example output: 'Bhai, main idhar aa gaya hu'. Only output translated text seamlessly."
-        else:
-            instruct = "You are a professional manga translator. Accurately translate this extracted text directly into fluid localized English. Return nothing but the translation output."
-
-        payload = {
-            "systemInstruction": {"parts": [{"text": instruct}]},
-            "contents": [{"parts": [{"text": str(text)}]}],
-            "generationConfig": {"temperature": 0.25}
-        }
-        
-        try:
-            # We enforce gentle dispatch wait natively so server doesn't 429 
-            await asyncio.sleep(0.4)
-            async with auth_session.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=aiohttp.ClientTimeout(total=45)) as response:
-                if response.status == 200:
-                    resp_json = await response.json()
-                    try: 
-                        return resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
-                    except (KeyError, IndexError): return text
-                    
-                elif response.status == 429: # Proper RPM Exhaustion Check
-                    await asyncio.sleep(2.0)
-                    return await self.request_google(text, auth_session, attempt + 1)
-                    
-                else: 
-                     await asyncio.sleep(1.0)
-                     return await self.request_google(text, auth_session, attempt + 1)
-                     
-        except Exception as NativeFail:
-            await asyncio.sleep(1.2)
-            return await self.request_google(text, auth_session, attempt + 1)
+        self.sys_token = os.environ.get("ENV_BOT_TOKEN")
+        self.a_idx = int(os.environ.get("ENV_API_ID"))
+        self.a_hash = os.environ.get("ENV_API_HASH")
+        self.cst_uid = int(os.environ.get("ENV_USER_ID"))
+        self.chk_chn = -1003700822969
 
     async def translate(self, queries, sl, tl, **kwargs):
-        if not self.keys:
-            print(">> WARNING! API pool Empty. Translation Skpped.")
-            return queries
-        print(f"\\n🔥 [DEEP-FORK] Operating direct Gemini Injection on {len(queries)} frame lines! (Mode: {self.target_lang})\\n")
-        async with aiohttp.ClientSession() as conn:
-            task_list = [self.request_google(req_q, conn) for req_q in queries]
-            output_responses = await asyncio.gather(*task_list)
-        return output_responses
+        if not queries: return queries
+        
+        print(f"\\n🔥 [Deep-Annelise] Frame Interceptor triggered! Intersecting {len(queries)} dialogue rows.")
+        out_rows = []
+        for nx, qrs in enumerate(queries):
+            r_x = nx + 1
+            out_rows.append(f"{r_x:02d}")
+            qrs_c = str(qrs).replace('\\n', ' ')
+            out_rows.append(f"{{{self.cst_uid}}}tutty{r_x:02d}({qrs_c})\\n")
+            
+        xport_nm = f"FrameExtr_{self.cst_uid}.txt"
+        with open(xport_nm, "w", encoding="utf-8") as op_w:
+            op_w.write("\\n".join(out_rows))
+            
+        print(">> Launching Independent Relay client connecting directly toward End-User interface...")
+        MT_Agent = Client(f"Agnt_{time.time()}", api_id=self.a_idx, api_hash=self.a_hash, bot_token=self.sys_token, in_memory=True, no_updates=True)
+        await MT_Agent.start()
+        
+        dirctn = f"📝 **Frames Disassembled Fully!**\\n\\n1️⃣ Open & Edit this mapped '.txt' file.\\n2️⃣ Translate text localized purely enclosed in `( )`.\\n3️⃣ DO NOT alter specific node tagging formatting loops like `{{..}}tutty`.\\n4️⃣ Resend updated document cleanly back to bot to trigger Engine Continuation Render! (Upto ~12 Mins Timer)"
+        await MT_Agent.send_document(self.cst_uid, xport_nm, caption=dirctn)
+        
+        # Establishing Wait Engine Protocol Frame Limits
+        translated_layer_dump = [raw for raw in queries] 
+        fxd_capture = False
+        
+        print(">> Suspending active GitHub workflow processes & Awaiting Return Packets.....")
+        
+        # Loop Check runs approx intervals of 15 seconds up to 12 mins. (GitHub limit 360m safe)
+        for interval in range(50):
+            await asyncio.sleep(15) 
+            target_hit = None
+            async for dm in MT_Agent.search_messages(self.chk_chn, query=f"#TXTDONE_{self.cst_uid}", limit=1):
+                target_hit = dm
+                break
+                
+            if target_hit and target_hit.document:
+                downl = await MT_Agent.download_media(target_hit)
+                try:
+                    with open(downl, "r", encoding="utf-8") as rf:
+                        txt_val = rf.read()
+                        
+                    ptn = r"\\{" + str(self.cst_uid) + r"\\}tutty(\d+)\((.*?)\)"
+                    matched = re.findall(ptn, txt_val, re.DOTALL)
+                    
+                    for (mcr_s, passd) in matched:
+                        loc_i = int(mcr_s) - 1
+                        if 0 <= loc_i < len(translated_layer_dump):
+                            translated_layer_dump[loc_i] = passd.strip()
+                            
+                    await target_hit.delete()
+                    fxd_capture = True
+                    print("\\n>> [YES] External Load Accepted. Realigning rendering engine formats.")
+                    break
+                except Exception as SysERR:
+                    print("Parse error on user formatting structure -> ", SysERR)
+                    
+        await MT_Agent.stop()
+        
+        if not fxd_capture:
+            print(f">> [!] CRITICAL | Human Protocol Timed-Out after 12 Mins! Passing blank translations sequence to complete safely...")
+            
+        return translated_layer_dump
 
-# MAGIC MAPPING: Whatever GPT version CLI asks for, they ALL point to our Supreme Gemini Fork Engine!
-class GPT3Translator(UltimateGeminiFork): pass
-class GPT35Translator(UltimateGeminiFork): pass
-class GPT35TurboTranslator(UltimateGeminiFork): pass
-class GPT4Translator(UltimateGeminiFork): pass
+# MAGIC MAPPING (Destroy external APIs defaults routing our Script Node internally overriding engine)
+class GPT3Translator(HumanInterventionTranslator): pass
+class GPT35Translator(HumanInterventionTranslator): pass
+class GPT4Translator(HumanInterventionTranslator): pass
 """
 
 # =================================================================
-# 🛡️ 2. DEPLOYMENT CORE (WHERE FORK HAPPENS IN REAL-TIME)
+# 🛡️ 2. EXECUTOR LOGIC ENGINE 
 # =================================================================
 async def run_translator_with_fallback(input_dir, output_dir, workspace):
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
-    
-    if not GEMINI_KEYS:
-        return False, "Failed", "Empty 0 Keys Setup - Terminated!"
 
-    # System parameters transfer to Hack Custom script environments
-    os.environ["ENV_GEMINI_POOL"] = GEMINI_KEYS_STR
-    os.environ["ENV_LANG_SET"] = LANG
+    # Sending required isolated variables direct access layer inside subprocess
+    os.environ["ENV_USER_ID"] = str(USER_ID)
+    os.environ["ENV_API_HASH"] = str(API_HASH)
+    os.environ["ENV_API_ID"] = str(API_ID)
+    os.environ["ENV_BOT_TOKEN"] = str(BOT_TOKEN)
 
-    # GITHUB HACK OVERRIDE EXECUTION 
-    # Library file .> manga_translator/translators/gpt3.py
+    # Injector Runtime
     if cwd_dir:
-        library_overwriter = os.path.join(cwd_dir, "manga_translator", "translators", "gpt3.py")
-        if os.path.exists(library_overwriter):
-            with open(library_overwriter, "w", encoding="utf-8") as writer:
-                writer.write(CUSTOM_GEMINI_NATIVE_PLUGIN)
-            print("🚀 Deep Annelise Custom Library Overwriter Executed: Perfect Fork Achieved!")
+        core_lib_node = os.path.join(cwd_dir, "manga_translator", "translators", "gpt3.py")
+        if os.path.exists(core_lib_node):
+            with open(core_lib_node, "w", encoding="utf-8") as injectn:
+                injectn.write(ROUTINE_SCRIPT_BYPASSER)
+            print("💥 DEEP-ANNELISE V-2 FRAME INJECTOR Executed Correctly!")
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     
-    # Observe we are asking library for 'gpt3', BUT under the hood, we wiped it 
-    # entirely so it executes UltimateGeminiFork instead without errors! 
+    # Observe '--translator gpt3' argument. Since Lib relies on it it intercepts ours Native Module script Code directly!! No internet needed!
     cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "ENG"] + style_flags
     
     if os.path.exists(output_dir): shutil.rmtree(output_dir)
@@ -156,42 +153,42 @@ async def run_translator_with_fallback(input_dir, output_dir, workspace):
 
     cnt_results = 0
     if os.path.exists(output_dir):
-        base_results = [f for root, _, fx in os.walk(output_dir) for f in fx if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))]
+        base_results = [f for r, _, fx in os.walk(output_dir) for f in fx if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))]
         cnt_results = len(base_results)
 
-    print(f">> Execution Phase Concluded | Returns {proc.returncode} | Node Generated Assets: {cnt_results}")
+    print(f">> Subprocess Operation Status Check | RtnCode {proc.returncode} | Output Asssts Loaded: {cnt_results}")
 
     if proc.returncode == 0 and cnt_results > 0:
-        return True, "DEEP FORK CORE - NATIVE GEMINI ✨", log
+        return True, "DEEP ANNELISE IN-LOOP SYSTEM ✨", log
     
     return False, "Failed", log
 
 # =================================================================
-# 📥 3. PRIMARY ENDPOINT TELEGRAM GATEWAY
+# 📥 3. PRIMARY TELEGRAM OUTPUT ARCHIVER 
 # =================================================================
 async def main():
-    if not FILE_ID: return
-    tg_bot = Client("Worker", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, no_updates=True)
+    if not FILE_ID: 
+        print("Empty File Matrix ID Found") return 
+    tg_bot = Client("WorkerMaster", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, no_updates=True)
     await tg_bot.start()
     async def e_msg(s_t):
         try: await tg_bot.edit_message_text(CHAT_ID, MSG_ID, s_t)
         except: pass
 
-    await e_msg(f"⏳ **Archiving Payload Access Phase: {FNAME}...**")
+    await e_msg(f"⏳ **Sequence Target Acquired** Format Init Pull...")
 
     dl_path = None
-    for attempt_seq in range(1, 6):
+    for attempt in range(1, 6):
         try:
             dl_path = await tg_bot.download_media(FILE_ID)
             if dl_path and os.path.exists(dl_path) and os.path.getsize(dl_path) > 1024:
                 break
             await asyncio.sleep(2)
         except BaseException:
-            await e_msg(f"⚠️ **Telegram Connectivity Phase {attempt_seq}/5** | Recovering Link...")
+            await e_msg(f"⚠️ **Network Dropout Phase {attempt}/5** | Retrying Target Link...")
             await asyncio.sleep(3)
 
-    if not dl_path or not os.path.exists(dl_path):
-        return await tg_bot.stop()
+    if not dl_path or not os.path.exists(dl_path): return await tg_bot.stop()
 
     ext = os.path.splitext(FNAME)[1].lower() or ".zip"
     ws = os.path.abspath("manga_workspace")
@@ -213,24 +210,22 @@ async def main():
         else:
             shutil.copy(dl_path, inp)
     except zipfile.BadZipFile:
-        await e_msg("❌ **Core Error | Archive Validation Sequence Format Fault.**")
+        await e_msg("❌ **Format File Internal Structure Protocol Rejection Dump.**")
         return await tg_bot.stop()
 
     pages = [os.path.join(r,f) for r,_,fs in os.walk(inp) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp','.bmp'))]
-    if not pages:
-        return await tg_bot.stop()
+    if not pages: return await tg_bot.stop()
 
-    lang_ux = "Hi-English (HQA Prompt)" if LANG == "hienglish" else "ENG Base Language NLP"
-    await e_msg(f"🔄 **Hacking Overriding Subsystems Activated | Visual Extracted Units: {len(pages)}** [Model Mode: {lang_ux}] ✨\n_Utilizing Raw Network Injection for pure operations._")
+    await e_msg(f"🔄 **Optical Layer Injection Stand-By:** {len(pages)} Extracting... Engine has handed Control to Human External Protocol Matrix.")
 
     success_bool, prvd_ui, full_core_log = await run_translator_with_fallback(inp, out, ws)
 
     if not success_bool:
-        err_out = f"⚠️ **FATAL OVERRIDE FAILURE**\nProcess hit an unconditional block node in Translation Stage.\n\n_System Diagnostics:_ `{full_core_log[-450:]}`"
+        err_out = f"⚠️ **FATAL COMPILER DENIAL LOOP TIMEOUT**\nRender system force halted sequences.\n\n_System Diagnostics:_ `{full_core_log[-450:]}`"
         await e_msg(err_out)
         return await tg_bot.stop()
 
-    await e_msg(f"🎨 **Pipeline Synthesis Achieved.** | Rendering Architecture Processors...")
+    await e_msg(f"🎨 **Translation Input Render Alignment Started.** Creating ZIP Layout...")
 
     finals_l = sorted([os.path.join(r,f) for r,_,fs in os.walk(out) for f in fs if f.lower().endswith(('.png','.jpg','.jpeg','.webp'))])
     zipx_out = "translated_" + FNAME if ext in [".zip",".cbz",".pdf"] else finals_l[0]
@@ -245,10 +240,10 @@ async def main():
 
     sbslmt_zpb = os.path.getsize(zipx_out) / (1024*1024)
     if sbslmt_zpb > 1900:
-        await e_msg(f"❌ **Package Data Threshold Met -> {sbslmt_zpb:.1f} MB** | 2GB Upload Restriction Trigerred.")
+        await e_msg(f"❌ **Package Data Threshold Met -> {sbslmt_zpb:.1f} MB** Limited Access Payload Blocked.")
         return await tg_bot.stop()
 
-    endcap_caption = f"✅ **Extraction Operation Finalised Natively!**\n🌐 Model Output Setup: {lang_ux}\n⚡ Architecture Status: Direct Native Gemini Integrated\n"
+    endcap_caption = f"✅ **Processing Repacked Success!**\n⚡ Control Type: Manual Human Output Render Logic MTPE\n"
     try:
         await tg_bot.send_document(CHAT_ID, zipx_out, caption=endcap_caption)
         try: await tg_bot.delete_messages(CHAT_ID, MSG_ID)
@@ -263,6 +258,7 @@ async def main():
         if ext in [".zip",".cbz",".pdf"]: os.remove(zipx_out)
     except: pass
     await tg_bot.stop()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
