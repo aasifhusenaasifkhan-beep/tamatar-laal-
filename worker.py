@@ -164,12 +164,12 @@ async def main():
     # =================================================================
     # 🔍 PHASE 1: OCR TEXT EXTRACTION FOR ALL PAGES (ONE GO)
     # =================================================================
-    # Running native translator set to 'none' ensures 100% stable offline OCR extraction
+    # Setting translator to 'original' forces the OCR engine to record actual speech texts
     cli_cmd_p1 = [
         "python", "-m", "manga_translator", 
         "-i", inp, 
         "--dest", out, 
-        "--translator", "none",
+        "--translator", "original",
         "--save-text"
     ]
     
@@ -193,7 +193,7 @@ async def main():
             percent = int((current_ocr_page / len(pages)) * 100)
             bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
             ocr_text = (
-                f"🔍 **Phase 1/4: Analyzing Frames (OCR Extraction)**\n"
+                f"🔍 **Phase 1/4: Analyzing Speech Frames (OCR)**\n"
                 f"Extracting speech bubbles from all images in parallel...\n\n"
                 f"**OCR Progress:** Image `{current_ocr_page}` of `{len(pages)}` parsed.\n"
                 f"`[{bar}] {percent}%`"
@@ -242,17 +242,20 @@ async def main():
             
             block_idx = lines[0]
             
-            # Smart filter to bypass color metadata lines
+            # Robust filter to completely bypass any color properties lines
             text_lines = []
             for line in lines[1:]:
-                if line.startswith("color:") or "fg, bg" in line:
+                lowered = line.lower()
+                if "color:" in lowered or "fg, bg" in lowered:
                     continue
                 text_lines.append(line)
                 
             if text_lines:
                 orig_text = text_lines[0]
+                b_num = parse_block_idx(block_idx)
+                # Formulate tag cleanly with single curly braces to avoid parsing offsets
                 master_lines.append(f"{block_idx}")
-                master_lines.append(f"{{{USER_ID}}}tutty_{page_idx}_{block_idx}({orig_text})\n")
+                master_lines.append(f"{{{USER_ID}}}tutty_{page_idx}_{b_num}({orig_text})\n")
         master_lines.append("") # Extra spacer between pages
 
     master_txt_path = os.path.join(ws, f"FrameExtr_{USER_ID}.txt")
@@ -345,8 +348,8 @@ async def main():
     content_b64 = data_snapshot.get("content", "")
     txt_val = base64.b64decode(content_b64).decode('utf-8', errors='ignore')
     
-    # Parse tag values using robust regular expressions (escaped properly for non f-string syntax)
-    pattern = r"\{\{\{(\d+)\}\}\}tutty_(\d+)_(\d+)\((.*?)\)"
+    # Matches single braces structure correctly without escape faults
+    pattern = r"\{(\d+)\}tutty_(\d+)_(\d+)\((.*?)\)"
     translations_map = {}
     
     for line in txt_val.splitlines():
@@ -375,7 +378,8 @@ async def main():
             meta_lines = []
             text_lines = []
             for line in lines[1:]:
-                if line.startswith("color:") or "fg, bg" in line:
+                lowered = line.lower()
+                if "color:" in lowered or "fg, bg" in lowered:
                     meta_lines.append(line)
                 else:
                     text_lines.append(line)
@@ -383,7 +387,6 @@ async def main():
             if text_lines:
                 orig_text = text_lines[0]
                 
-                # Safe numeric parsing of block indexes
                 p_idx = page_idx
                 b_idx = parse_block_idx(block_idx)
                 key = (p_idx, b_idx)
@@ -408,17 +411,15 @@ async def main():
     # =================================================================
     # 🎨 PHASE 3: RENDERING & ADJUSTING COMPLETED TYPESETTING (ONE GO)
     # =================================================================
-    # Utilizing professional layout options for text wrapping and bubble padding constraints
+    # Set translator back to 'original' to force the loader to typeset the text
+    # Mask dilation and kernel sizes are set to stable defaults to prevent border bleeding/smudging
     cli_cmd_p2 = [
         "python", "-m", "manga_translator", 
         "-i", inp, 
         "--dest", out, 
-        "--translator", "none",
+        "--translator", "original",
         "--load-text",
         "--manga2eng",
-        "--font-size-minimum", "14",
-        "--mask-dilation-offset", "20",
-        "--kernel-size", "5",
         "--overwrite"
     ]
 
