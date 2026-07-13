@@ -46,6 +46,11 @@ if not BOT_TOKEN or not API_ID:
     print("❌ CRITICAL ERROR: GitHub Secrets parameters are missing!")
     sys.exit(1)
 
+# Robust helper to extract numeric page/block indices safely
+def parse_block_idx(block_idx_str):
+    digits = "".join([c for c in block_idx_str if c.isdigit()])
+    return int(digits) if digits else 0
+
 # Helper function to send files to PM cleanly using raw HTTP
 def send_document_via_http(bot_token, chat_id, file_path, caption):
     url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
@@ -159,13 +164,13 @@ async def main():
     # =================================================================
     # 🔍 PHASE 1: OCR TEXT EXTRACTION FOR ALL PAGES (ONE GO)
     # =================================================================
-    # Utilizing explicit 'local' batch mode CLI subcommand for correct path indexing
+    # Utilizing 'none' translator ensures maximum speed and full compatibility with local mode
     cli_cmd_p1 = [
         "python", "-m", "manga_translator", 
         "local",
         "-i", inp, 
         "-o", out, 
-        "--translator", "original",
+        "--translator", "none",
         "--save-text",
         "--overwrite"
     ]
@@ -177,12 +182,14 @@ async def main():
         cwd=cwd_dir
     )
     
+    logs_p1 = []
     current_ocr_page = 0
     while True:
         line = await proc_p1.stdout.readline()
         if not line:
             break
         decoded = line.decode('utf-8', errors='ignore').strip()
+        logs_p1.append(decoded)
         print(decoded) # Output to Actions Console log
         
         if "Translating:" in decoded:
@@ -197,7 +204,19 @@ async def main():
             )
             await update_status_throttled(ocr_text)
 
-    await proc_p1.wait()
+    return_code_p1 = await proc_p1.wait()
+    if return_code_p1 != 0:
+        # Transparent error reporter to help troubleshoot issues instantly
+        error_logs = "\n".join(logs_p1[-10:])
+        error_text = (
+            f"❌ **Phase 1 Execution Failed (Exit Code: {return_code_p1}):**\n"
+            f"Background engine crashed during processing.\n\n"
+            f"**Error Traceback Log Snippet:**\n"
+            f"`{error_logs}`"
+        )
+        await tg_bot.edit_message_text(CHAT_ID, MSG_ID, error_text)
+        shutil.rmtree(ws, ignore_errors=True)
+        return await tg_bot.stop()
 
     # =================================================================
     # 📝 SCAN ALL POSSIBLE PATHS AND COMPILE EXTRACTED SUBTITLES
@@ -406,7 +425,7 @@ async def main():
         
         # Deploy sync to all cache paths
         for dp in dest_paths:
-            dp_dir = os.path.dirname(dp)
+            dp_dir = os.dirname(dp)
             if os.path.exists(dp_dir):
                 with open(dp, "w", encoding="utf-8") as wf:
                     wf.write(final_file_content)
@@ -428,7 +447,7 @@ async def main():
         "local",
         "-i", inp, 
         "-o", out, 
-        "--translator", "original",
+        "--translator", "none",
         "--load-text",
         "--manga2eng",
         "--overwrite"
@@ -441,12 +460,14 @@ async def main():
         cwd=cwd_dir
     )
 
+    logs_p2 = []
     current_render_page = 0
     while True:
         line = await proc_p2.stdout.readline()
         if not line:
             break
         decoded = line.decode('utf-8', errors='ignore').strip()
+        logs_p2.append(decoded)
         print(decoded)
         
         if "Translating:" in decoded:
@@ -461,7 +482,18 @@ async def main():
             )
             await update_status_throttled(render_text)
 
-    await proc_p2.wait()
+    return_code_p2 = await proc_p2.wait()
+    if return_code_p2 != 0:
+        error_logs_p2 = "\n".join(logs_p2[-10:])
+        error_text = (
+            f"❌ **Phase 3 Execution Failed (Exit Code: {return_code_p2}):**\n"
+            f"Typesetting engine failed to render the translations.\n\n"
+            f"**Error Traceback Log Snippet:**\n"
+            f"`{error_logs_p2}`"
+        )
+        await tg_bot.edit_message_text(CHAT_ID, MSG_ID, error_text)
+        shutil.rmtree(ws, ignore_errors=True)
+        return await tg_bot.stop()
 
     # =================================================================
     # 📦 PHASE 4: COMPILING & DELIVERING THE OUTPUT
