@@ -46,6 +46,11 @@ if not BOT_TOKEN or not API_ID:
     print("❌ CRITICAL ERROR: GitHub Secrets parameters are missing!")
     sys.exit(1)
 
+# Robust helper to extract numeric page/block indices safely
+def parse_block_idx(block_idx_str):
+    digits = "".join([c for c in block_idx_str if c.isdigit()])
+    return int(digits) if digits else 0
+
 # Helper function to send files to PM cleanly using raw HTTP
 def send_document_via_http(bot_token, chat_id, file_path, caption):
     url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
@@ -159,12 +164,12 @@ async def main():
     # =================================================================
     # 🔍 PHASE 1: OCR TEXT EXTRACTION FOR ALL PAGES (ONE GO)
     # =================================================================
-    # Running native original translator with save-text ensures 100% crash-proof speed
+    # Running native translator set to 'none' ensures 100% stable offline OCR extraction
     cli_cmd_p1 = [
         "python", "-m", "manga_translator", 
         "-i", inp, 
         "--dest", out, 
-        "--translator", "original",
+        "--translator", "none",
         "--save-text"
     ]
     
@@ -231,10 +236,21 @@ async def main():
             
         blocks = content.strip().split("\n\n")
         for block in blocks:
-            lines = block.strip().split("\n")
-            if len(lines) >= 2:
-                block_idx = lines[0].strip()
-                orig_text = lines[1].strip()
+            lines = [l.strip() for l in block.strip().split("\n") if l.strip()]
+            if not lines:
+                continue
+            
+            block_idx = lines[0]
+            
+            # Smart filter to bypass color metadata lines
+            text_lines = []
+            for line in lines[1:]:
+                if line.startswith("color:") or "fg, bg" in line:
+                    continue
+                text_lines.append(line)
+                
+            if text_lines:
+                orig_text = text_lines[0]
                 master_lines.append(f"{block_idx}")
                 master_lines.append(f"{{{USER_ID}}}tutty_{page_idx}_{block_idx}({orig_text})\n")
         master_lines.append("") # Extra spacer between pages
@@ -282,7 +298,7 @@ async def main():
     while time.time() - start_time < timeout_duration:
         elapsed = int(time.time() - start_time)
         remaining = timeout_duration - elapsed
-        mins, secs = mod_val = divmod(remaining, 60)
+        mins, secs = divmod(remaining, 60)
         
         percent = int((elapsed / timeout_duration) * 100)
         bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
@@ -329,7 +345,7 @@ async def main():
     content_b64 = data_snapshot.get("content", "")
     txt_val = base64.b64decode(content_b64).decode('utf-8', errors='ignore')
     
-    # Parse tag values using robust regular expressions (non f-string style)
+    # Parse tag values using robust regular expressions (escaped properly for non f-string syntax)
     pattern = r"\{\{\{(\d+)\}\}\}tutty_(\d+)_(\d+)\((.*?)\)"
     translations_map = {}
     
@@ -349,14 +365,34 @@ async def main():
         blocks = content.strip().split("\n\n")
         new_blocks = []
         for block in blocks:
-            lines = block.strip().split("\n")
-            if len(lines) >= 2:
-                block_idx = lines[0].strip()
-                orig_text = lines[1].strip()
+            lines = [l.strip() for l in block.strip().split("\n") if l.strip()]
+            if not lines:
+                continue
                 
-                key = (page_idx, int(block_idx))
+            block_idx = lines[0]
+            
+            # Filter and preserve metadata lines (colors, styles, etc.)
+            meta_lines = []
+            text_lines = []
+            for line in lines[1:]:
+                if line.startswith("color:") or "fg, bg" in line:
+                    meta_lines.append(line)
+                else:
+                    text_lines.append(line)
+                    
+            if text_lines:
+                orig_text = text_lines[0]
+                
+                # Safe numeric parsing of block indexes
+                p_idx = page_idx
+                b_idx = parse_block_idx(block_idx)
+                key = (p_idx, b_idx)
+                
                 translation_text = translations_map.get(key, orig_text)
-                new_blocks.append(f"{block_idx}\n{orig_text}\n{translation_text}")
+                
+                # Assemble block structures preserving custom styles
+                reconstructed_lines = [block_idx] + meta_lines + [orig_text, translation_text]
+                new_blocks.append("\n".join(reconstructed_lines))
                 
         with open(file_path, "w", encoding="utf-8") as wf:
             wf.write("\n\n".join(new_blocks) + "\n\n")
@@ -377,7 +413,7 @@ async def main():
         "python", "-m", "manga_translator", 
         "-i", inp, 
         "--dest", out, 
-        "--translator", "original",
+        "--translator", "none",
         "--load-text",
         "--manga2eng",
         "--font-size-minimum", "14",
