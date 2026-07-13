@@ -62,18 +62,36 @@ def update_status_via_http(message, percent):
 # 🛡️ 1. SUBPROCESS RENDERING CONTROLLER (BATCH TRANS MODE)
 # =================================================================
 async def run_translator_ocr_only(input_dir, json_output_path, cwd_dir):
-    # Runs OCR only on all images and saves blocks to single json file
-    cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--translator", "none", "--save-text-file", json_output_path]
+    # FIXED: Added positional "local" subcommand to the command array
+    cli_cmd = ["python", "-m", "manga_translator", "local", "-i", input_dir, "--translator", "none", "--save-text-file", json_output_path]
     proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
-    await proc.communicate()
+    
+    # Enable dynamic console logging so we can trace live outputs
+    while True:
+        line = await proc.stdout.readline()
+        if not line:
+            break
+        decoded = line.decode('utf-8', errors='ignore').strip()
+        print(decoded)
+
+    await proc.wait()
     return proc.returncode == 0
 
 async def run_translator_render_only(input_dir, output_dir, json_input_path, cwd_dir):
-    # Renders updated translation json onto images
+    # FIXED: Added positional "local" subcommand to the command array
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
-    cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--load-text", json_input_path] + style_flags
+    cli_cmd = ["python", "-m", "manga_translator", "local", "-i", input_dir, "--dest", output_dir, "--load-text", json_input_path] + style_flags
     proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
-    await proc.communicate()
+    
+    # Enable dynamic console logging so we can trace live outputs
+    while True:
+        line = await proc.stdout.readline()
+        if not line:
+            break
+        decoded = line.decode('utf-8', errors='ignore').strip()
+        print(decoded)
+
+    await proc.wait()
     return proc.returncode == 0
 
 
