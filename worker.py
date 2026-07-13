@@ -30,11 +30,15 @@ REPO_NAME = os.getenv("REPO_NAME", "aasifhusenaasifkhan-beep/tamatar-laal-").str
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
 os.environ["OPENBLAS_NUM_THREADS"] = "4"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
+os.environ["NUMEXPR_NUM_THREADS"] = "4"
 
-print(f"=== DEEP-ANNELISE MANUAL ENGINE ON CPU | USER: {USER_ID} ===")
-if not BOT_TOKEN or not API_ID:
-    print("❌ CRITICAL ERROR: GitHub Secrets parameters are missing!")
-    sys.exit(1)
+# Set optimal thread count for PyTorch CPU operations
+try:
+    import torch
+    torch.set_num_threads(4)
+except ImportError:
+    pass
 
 
 # =========================================================================================
@@ -154,19 +158,48 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     os.environ["ENV_TRANSLATE_MODE"] = "EXTRACT"
     cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "FRA"] + style_flags
     
-    await bot_client.edit_message_text(CHAT_ID, MSG_ID, "🔍 **Step 1/3: Extracting speech bubbles (OCR)...\n`[████░░░░░░] 40%`**")
+    await bot_client.edit_message_text(CHAT_ID, MSG_ID, "🔍 **Phase 1/3: Extracting speech bubbles (OCR)...\n`[████░░░░░░] 40%`**")
     
     proc = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
+    
+    pages = sorted([os.path.join(r, f) for r, _, fs in os.walk(input_dir) for f in fs if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp'))])
+    
+    current_page = 0
+    start_time = time.time()
+    
     while True:
         line = await proc.stdout.readline()
         if not line: break
-        print(line.decode('utf-8', errors='ignore').strip()) # Capture system logs
+        decoded = line.decode('utf-8', errors='ignore').strip()
+        print(decoded) # Capture system logs
+        
+        if "Translating:" in decoded:
+            current_page += 1
+            elapsed = time.time() - start_time
+            speed = current_page / elapsed if elapsed > 0 else 0
+            percent = int((current_page / len(pages)) * 100)
+            bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
+            
+            speed_str = f"{speed:.2f} pages/sec"
+            if speed > 0:
+                speed_str += f" ({1/speed:.1f} sec/page)"
+                
+            status_text = (
+                f"🔍 **Phase 1/3: Extracting speech frames (OCR)**\n"
+                f"Analyzing page structures to map dialogue bubbles...\n\n"
+                f"**Extraction Progress:** Page `{current_page}` of `{len(pages)}` finished.\n"
+                f"**Speed:** `{speed_str}` | **Percentage:** `{percent}%`\n"
+                f"`[{bar}]`"
+            )
+            try:
+                await bot_client.edit_message_text(CHAT_ID, MSG_ID, status_text)
+            except:
+                pass
+                
     await proc.wait()
 
     # Compile the consolidated Master subtitle file
-    pages = sorted([os.path.join(r, f) for r, _, fs in os.walk(input_dir) for f in fs if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp'))])
     master_lines = []
-    
     for i in range(1, 1000):
         page_file = os.path.join(ws, f"page_{i}_queries.txt")
         if os.path.exists(page_file):
@@ -226,7 +259,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
         bar = "█" * filled_length + "░" * (10 - filled_length)
         
         wait_text = (
-            f"⏳ **Step 2/3: Waiting for translation...**\n"
+            f"⏳ **Phase 2/3: Waiting for translation file...**\n"
             f"Consolidated file delivered to user PM.\n\n"
             f"**Time Remaining Countdown:** `{mins:02d}m {secs:02d}s`\n"
             f"`[{bar}] {percent}% elapsed`"
@@ -278,17 +311,46 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     # PHASE 3: RENDERING & COMPILING TRANSLATIONS (FAST RUN)
     # -----------------------------------------------------------------
     os.environ["ENV_TRANSLATE_MODE"] = "RENDER"
-    await bot_client.edit_message_text(CHAT_ID, MSG_ID, "🎨 **Step 3/3: Typesetting & Rendering manga...\n`[████████░░] 80%`**")
+    await bot_client.edit_message_text(CHAT_ID, MSG_ID, "🎨 **Phase 3/3: Typesetting & Rendering manga...\n`[████████░░] 80%`**")
     
     if os.path.exists(output_dir): 
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
     proc2 = await asyncio.create_subprocess_exec(*cli_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=cwd_dir)
+    
+    current_render_page = 0
+    start_render_time = time.time()
+    
     while True:
         line = await proc2.stdout.readline()
         if not line: break
-        print(line.decode('utf-8', errors='ignore').strip())
+        decoded = line.decode('utf-8', errors='ignore').strip()
+        print(decoded)
+        
+        if "Translating:" in decoded:
+            current_render_page += 1
+            elapsed_render = time.time() - start_render_time
+            speed_render = current_render_page / elapsed_render if elapsed_render > 0 else 0
+            percent_render = int((current_render_page / len(pages)) * 100)
+            bar_render = "█" * (percent_render // 10) + "░" * (10 - (percent_render // 10))
+            
+            speed_render_str = f"{speed_render:.2f} pages/sec"
+            if speed_render > 0:
+                speed_render_str += f" ({1/speed_render:.1f} sec/page)"
+                
+            render_text = (
+                f"🎨 **Phase 3/3: Rendering completed typesetting**\n"
+                f"Erasing bubbles and adjusting fonts with automatic fitting...\n\n"
+                f"**Render Progress:** Page `{current_render_page}` of `{len(pages)}` finished.\n"
+                f"**Speed:** `{speed_render_str}` | **Percentage:** `{percent_render}%`\n"
+                f"`[{bar_render}]`"
+            )
+            try:
+                await bot_client.edit_message_text(CHAT_ID, MSG_ID, render_text)
+            except:
+                pass
+                
     await proc2.wait()
     
     cnt_results = 0
@@ -389,10 +451,17 @@ async def main():
             for fd_c in finals_l: 
                 z_enc.write(fd_c, os.path.relpath(fd_c, out))
     elif ext == ".pdf":
-        from PIL import Image
-        px_i_set = [Image.open(p_z_file).convert('RGB') for p_z_file in finals_l]
-        if px_i_set: 
-            px_i_set[0].save(zipx_out, save_all=True, append_images=px_i_set[1:])
+        # Highly optimized PyMuPDF (fitz) engine to prevent Pillow memory leaks/freezes
+        import fitz
+        doc = fitz.open()
+        for img_path in finals_l:
+            img = fitz.open(img_path)
+            rect = img[0].rect
+            page = doc.new_page(width=rect.width, height=rect.height)
+            page.insert_image(rect, filename=img_path)
+            img.close()
+        doc.save(zipx_out)
+        doc.close()
 
     endcap_caption = "✅ **Processing Repacked Successfully!**\n⚡ Control Type: Manual Human Output Render Logic MTPE"
     
