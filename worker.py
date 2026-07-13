@@ -43,6 +43,7 @@ ROUTINE_SCRIPT_BYPASSER = """
 import os
 import asyncio
 import time
+import base64
 import requests
 from .common import CommonTranslator
 
@@ -55,11 +56,12 @@ class HumanInterventionTranslator(CommonTranslator):
         # Base constructor initialization without hitting external API triggers
         super().__init__(*args, **kwargs)
         self.sys_token = os.environ.get("ENV_BOT_TOKEN")
+        self.git_token = os.environ.get("ENV_GITHUB_TOKEN")
         self.cst_uid = int(os.environ.get("ENV_USER_ID", "0"))
         self.chat_id = int(os.environ.get("ENV_CHAT_ID", "0"))
         self.msg_id = int(os.environ.get("ENV_MSG_ID", "0"))
         self.repo_name = os.environ.get("ENV_REPO_NAME", "")
-        self.page_counter = 1 # Stateless sequential page counter
+        self.frame_counter = 0
 
     # Forcefully bypass translator level language verification checks
     def supports_languages(self, from_lang, to_lang, fatal=False):
@@ -78,55 +80,81 @@ class HumanInterventionTranslator(CommonTranslator):
 
     def send_subtitles_via_http(self, file_path, caption):
         url = f"https://api.telegram.org/bot{self.sys_token}/sendDocument"
-        with open(file_path, 'rb') as doc:
-            requests.post(url, data={
-                'chat_id': self.cst_uid,
-                'caption': caption,
-                'parse_mode': 'Markdown'
-            }, files={'document': doc})
+        try:
+            with open(file_path, 'rb') as doc:
+                requests.post(url, data={
+                    'chat_id': self.cst_uid,
+                    'caption': caption,
+                    'parse_mode': 'Markdown'
+                }, files={'document': doc}, timeout=15)
+        except Exception as e:
+            print(f"Error sending subtitles to user: {e}")
 
     def update_status_via_http(self, message):
         url = f"https://api.telegram.org/bot{self.sys_token}/editMessageText"
-        requests.post(url, json={
-            "chat_id": self.chat_id,
-            "message_id": self.msg_id,
-            "text": message,
-            "parse_mode": "Markdown"
-        })
+        try:
+            requests.post(url, json={
+                "chat_id": self.chat_id,
+                "message_id": self.msg_id,
+                "text": message,
+                "parse_mode": "Markdown"
+            }, timeout=15)
+        except Exception as e:
+            print(f"Error updating status: {e}")
 
     async def do_custom_workflow(self, queries):
         if not queries: 
             return queries
         
-        print(f"\\n🔥 Frame Interceptor: Processing Page {self.page_counter} ({len(queries)} rows).")
-        out_rows = []
-        out_rows.append(f"# MSG_ID: {self.msg_id}")
-        out_rows.append(f"# PAGE: {self.page_counter}") # Stateless page mapping header
-        out_rows.append("# ----------------------------------------")
+        self.frame_counter += 1
+        print(f"\\n🔥 Frame Interceptor: Processing Frame #{self.frame_counter} with {len(queries)} dialogue rows.")
         
+        # 1. CLEAN UP PREVIOUS TRANSLATION FROM GITHUB TO PREVENT AUTOMATIC SKIP BUG
+        headers = {
+            "Accept": "application/vnd.github.v3+json"
+        }
+        if self.git_token:
+            headers["Authorization"] = f"token {self.git_token}"
+            
+        delete_url = f"https://api.github.com/repos/{self.repo_name}/contents/trans_{self.cst_uid}.txt"
+        try:
+            r = requests.get(delete_url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+                payload = {
+                    "message": f"Clean up translation for frame {self.frame_counter}",
+                    "sha": sha
+                }
+                requests.delete(delete_url, headers=headers, json=payload, timeout=10)
+                print(f"Successfully deleted older trans file for Frame #{self.frame_counter} to enforce sync waiting.")
+        except Exception as e:
+            print(f"Error clean-checking old file: {e}")
+            
+        out_rows = []
         for nx, qrs in enumerate(queries):
             r_x = nx + 1
             out_rows.append(f"{r_x:02d}")
             qrs_c = str(qrs).replace('\\n', ' ')
             out_rows.append(f"{{{self.cst_uid}}}tutty{r_x:02d}({qrs_c})\\n")
             
-        xport_nm = f"FrameExtr_{self.cst_uid}_page_{self.page_counter}.txt"
+        # Target specific page numbering for tracking
+        xport_nm = f"FrameExtr_{self.cst_uid}_page_{self.frame_counter}.txt"
         with open(xport_nm, "w", encoding="utf-8") as op_w:
             op_w.write("\\n".join(out_rows))
             
         dirctn = (
-            f"📝 **Frames Disassembled Fully (Page {self.page_counter})!**\\n\\n"
+            f"📝 **Frame {self.frame_counter} Disassembled Fully!**\\n\\n"
             "1️⃣ Open & Edit this mapped '.txt' file.\\n"
             "2️⃣ Translate text localized purely enclosed in `( )`.\\n"
             "3️⃣ DO NOT alter specific node tagging formatting loops like `{{{self.cst_uid}}}tutty`.\\n"
             "4️⃣ Resend updated document cleanly back to bot to trigger Engine Continuation Render! (Waiting Timeout ~12 Mins)"
         )
         
-        # Send page subtitles directly to User's PM
+        # Send directly to User's PM using raw Telegram HTTP API
         self.send_subtitles_via_http(xport_nm, dirctn)
         
-        # Update progress bar status
-        self.update_status_via_http(self.draw_bar(50, f"Page {self.page_counter} Extracted! Delivered to your PM. Waiting..."))
+        # Update status on Group status message via raw HTTP
+        self.update_status_via_http(self.draw_bar(50, f"Frame {self.frame_counter} extracted! Sent to user's PM. Waiting for translation..."))
 
         translated_layer_dump = [raw for raw in queries] 
         fxd_capture = False
@@ -135,45 +163,45 @@ class HumanInterventionTranslator(CommonTranslator):
         for elapsed in range(0, 720, 15):
             await asyncio.sleep(15) 
             
-            # Poll raw GitHub (Fallback support for both main & master branch!)
-            github_url = f"https://raw.githubusercontent.com/{self.repo_name}/main/trans_{self.cst_uid}_page_{self.page_counter}.txt?t={time.time()}"
-            res = requests.get(github_url)
-            
-            if res.status_code == 404:
-                # master branch fallback
-                github_url = f"https://raw.githubusercontent.com/{self.repo_name}/master/trans_{self.cst_uid}_page_{self.page_counter}.txt?t={time.time()}"
-                res = requests.get(github_url)
-            
-            if res.status_code == 200:
-                txt_val = res.text
-                try:
-                    tag = f"{{{self.cst_uid}}}tutty"
-                    for line in txt_val.splitlines():
-                        line = line.strip()
-                        if tag in line:
-                            idx_part = line.split(tag)[1]
-                            idx_str = "".join([c for c in idx_part if c.isdigit()])
-                            idx = int(idx_str) - 1
-                            
-                            text_part = idx_part[len(idx_str):].strip()
-                            if text_part.startswith("(") and text_part.endswith(")"):
-                                translated_text = text_part[1:-1]
-                            else:
-                                translated_text = text_part.strip("()")
+            # Direct API query with bypass cache to strictly avoid 404 cache lag
+            api_url = f"https://api.github.com/repos/{self.repo_name}/contents/trans_{self.cst_uid}.txt?t={int(time.time())}"
+            try:
+                res = requests.get(api_url, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    content_b64 = data.get("content", "")
+                    txt_val = base64.b64decode(content_b64).decode('utf-8', errors='ignore')
+                    
+                    try:
+                        tag = f"{{{self.cst_uid}}}tutty"
+                        for line in txt_val.splitlines():
+                            line = line.strip()
+                            if tag in line:
+                                idx_part = line.split(tag)[1]
+                                idx_str = "".join([c for c in idx_part if c.isdigit()])
+                                idx = int(idx_str) - 1
                                 
-                            if 0 <= idx < len(translated_layer_dump):
-                                translated_layer_dump[idx] = translated_text.strip()
-                                
-                    fxd_capture = True
-                    break
-                except Exception as SysERR:
-                    print("Parse error on user formatting structure -> ", SysERR)
+                                text_part = idx_part[len(idx_str):].strip()
+                                if text_part.startswith("(") and text_part.endswith(")"):
+                                    translated_text = text_part[1:-1]
+                                else:
+                                    translated_text = text_part.strip("()")
+                                    
+                                if 0 <= idx < len(translated_layer_dump):
+                                    translated_layer_dump[idx] = translated_text.strip()
+                                    
+                        fxd_capture = True
+                        break
+                    except Exception as SysERR:
+                        print("Parse error on user formatting structure -> ", SysERR)
+            except Exception as net_err:
+                print(f"Network error while polling API: {net_err}")
                     
         if not fxd_capture:
             print(">> [!] Timeout reached or translation failed. Outputting empty render.")
+        else:
+            print(f">> ✅ Frame #{self.frame_counter} synced back perfectly.")
             
-        # Increment page counter for next iteration
-        self.page_counter += 1
         return translated_layer_dump
 
 # Mapping all possible classes
@@ -199,6 +227,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     os.environ["ENV_CHAT_ID"] = str(CHAT_ID)
     os.environ["ENV_MSG_ID"] = str(MSG_ID)
     os.environ["ENV_REPO_NAME"] = str(REPO_NAME)
+    os.environ["ENV_GITHUB_TOKEN"] = os.getenv("GITHUB_TOKEN", "").strip()
 
     # Overwrite 'chatgpt.py' because library uses it internally
     if cwd_dir:
@@ -210,9 +239,9 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
 
     style_flags = ["--manga2eng"] if STYLE == "style2" else []
     
-    # FIXED: Added positional subcommand "local" to command array
     # FIXED BYPASS: Change target language from "ENG" to "FRA" (French)
-    cli_cmd = ["python", "-m", "manga_translator", "local", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "FRA"] + style_flags
+    # This prevents the library from filtering out already English dialogues, while preserving horizontal Latin layout & fonts.
+    cli_cmd = ["python", "-m", "manga_translator", "-i", input_dir, "--dest", output_dir, "--translator", "gpt3", "-l", "FRA"] + style_flags
     
     if os.path.exists(output_dir): 
         shutil.rmtree(output_dir)
