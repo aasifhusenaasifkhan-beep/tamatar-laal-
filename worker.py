@@ -46,11 +46,6 @@ if not BOT_TOKEN or not API_ID:
     print("❌ CRITICAL ERROR: GitHub Secrets parameters are missing!")
     sys.exit(1)
 
-# Robust helper to extract numeric page/block indices safely
-def parse_block_idx(block_idx_str):
-    digits = "".join([c for c in block_idx_str if c.isdigit()])
-    return int(digits) if digits else 0
-
 # Helper function to send files to PM cleanly using raw HTTP
 def send_document_via_http(bot_token, chat_id, file_path, caption):
     url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
@@ -164,13 +159,15 @@ async def main():
     # =================================================================
     # 🔍 PHASE 1: OCR TEXT EXTRACTION FOR ALL PAGES (ONE GO)
     # =================================================================
-    # Setting translator to 'original' forces the OCR engine to record actual speech texts
+    # Utilizing explicit 'local' batch mode CLI subcommand for correct path indexing
     cli_cmd_p1 = [
         "python", "-m", "manga_translator", 
+        "local",
         "-i", inp, 
-        "--dest", out, 
+        "-o", out, 
         "--translator", "original",
-        "--save-text"
+        "--save-text",
+        "--overwrite"
     ]
     
     proc_p1 = await asyncio.create_subprocess_exec(
@@ -252,10 +249,9 @@ async def main():
                 
             if text_lines:
                 orig_text = text_lines[0]
-                b_num = parse_block_idx(block_idx)
-                # Formulate tag cleanly with single curly braces to avoid parsing offsets
+                # Formulate tag with non-parenthesis double-arrow separator to bypass nested punctuation issues
                 master_lines.append(f"{block_idx}")
-                master_lines.append(f"{{{USER_ID}}}tutty_{page_idx}_{b_num}({orig_text})\n")
+                master_lines.append(f"{{{USER_ID}}}tutty_{page_idx}_{block_idx} ==> {orig_text}\n")
         master_lines.append("") # Extra spacer between pages
 
     master_txt_path = os.path.join(ws, f"FrameExtr_{USER_ID}.txt")
@@ -282,8 +278,8 @@ async def main():
         f"📝 **Manga Consolidated Translation File Ready!**\n\n"
         f"**Images Extracted:** `{len(pages)}` Pages\n"
         f"**Instructions:**\n"
-        f"1️⃣ Translate the dialogues enclosed purely inside brackets `( )`.\n"
-        f"2️⃣ DO NOT alter the `{{{USER_ID}}}tutty` tags.\n"
+        f"1️⃣ Translate the dialogues written after the `==>` arrow.\n"
+        f"2️⃣ DO NOT alter the `{{{USER_ID}}}tutty` tags or the `==>` arrow.\n"
         f"3️⃣ Send this edited file back to the bot in PM.\n\n"
         f"⏳ **Timeout Alarm:** You have exactly **10 minutes** to translate and return this file!"
     )
@@ -348,8 +344,8 @@ async def main():
     content_b64 = data_snapshot.get("content", "")
     txt_val = base64.b64decode(content_b64).decode('utf-8', errors='ignore')
     
-    # Matches single braces structure correctly without escape faults
-    pattern = r"\{(\d+)\}tutty_(\d+)_(\d+)\((.*?)\)"
+    # Matches the double arrow separator perfectly even with special chars
+    pattern = r"\{(\d+)\}tutty_(\d+)_(.*?) ==+ (.*)"
     translations_map = {}
     
     for line in txt_val.splitlines():
@@ -357,12 +353,21 @@ async def main():
         match = re.search(pattern, line)
         if match:
             _, p_idx, b_idx, text = match.groups()
-            translations_map[(int(p_idx), int(b_idx))] = text.strip()
+            translations_map[(int(p_idx), b_idx.strip())] = text.strip()
 
-    # Recreate the individual files in source_folder with newly mapped translations
+    # Recreate the individual files in ALL possible results locations to ensure rendering engine fetches them
     for page_idx, fname in page_to_file.items():
-        file_path = os.path.join(source_folder, fname)
-        with open(file_path, "r", encoding="utf-8") as rf:
+        # List of paths to write/overwrite to be absolutely certain `--load-text` finds them
+        dest_paths = [
+            os.path.join(source_folder, fname),
+            os.path.abspath(os.path.join("manga-image-translator", "result", fname)),
+            os.path.abspath(os.path.join("manga-image-translator", "results", fname)),
+            os.path.abspath(os.path.join("result", fname)),
+            os.path.abspath(os.path.join("results", fname))
+        ]
+        
+        orig_file_path = os.path.join(source_folder, fname)
+        with open(orig_file_path, "r", encoding="utf-8") as rf:
             content = rf.read()
             
         blocks = content.strip().split("\n\n")
@@ -388,8 +393,8 @@ async def main():
                 orig_text = text_lines[0]
                 
                 p_idx = page_idx
-                b_idx = parse_block_idx(block_idx)
-                key = (p_idx, b_idx)
+                b_idx_str = block_idx.strip()
+                key = (p_idx, b_idx_str)
                 
                 translation_text = translations_map.get(key, orig_text)
                 
@@ -397,8 +402,14 @@ async def main():
                 reconstructed_lines = [block_idx] + meta_lines + [orig_text, translation_text]
                 new_blocks.append("\n".join(reconstructed_lines))
                 
-        with open(file_path, "w", encoding="utf-8") as wf:
-            wf.write("\n\n".join(new_blocks) + "\n\n")
+        final_file_content = "\n\n".join(new_blocks) + "\n\n"
+        
+        # Deploy sync to all cache paths
+        for dp in dest_paths:
+            dp_dir = os.path.dirname(dp)
+            if os.path.exists(dp_dir):
+                with open(dp, "w", encoding="utf-8") as wf:
+                    wf.write(final_file_content)
 
     # Delete translation file from GitHub Actions repo to clean up workspace
     try:
@@ -411,12 +422,12 @@ async def main():
     # =================================================================
     # 🎨 PHASE 3: RENDERING & ADJUSTING COMPLETED TYPESETTING (ONE GO)
     # =================================================================
-    # Set translator back to 'original' to force the loader to typeset the text
-    # Mask dilation and kernel sizes are set to stable defaults to prevent border bleeding/smudging
+    # Standardizing with local batch mode execution to align loading structures
     cli_cmd_p2 = [
         "python", "-m", "manga_translator", 
+        "local",
         "-i", inp, 
-        "--dest", out, 
+        "-o", out, 
         "--translator", "original",
         "--load-text",
         "--manga2eng",
