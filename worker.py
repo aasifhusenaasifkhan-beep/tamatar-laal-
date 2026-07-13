@@ -140,6 +140,22 @@ async def main():
 
     cwd_dir = "manga-image-translator" if os.path.exists("manga-image-translator") else None
 
+    # Pre-clean any leftover translations inside all possible result locations to avoid conflicts
+    possible_folders = [
+        os.path.join(ws, "output"),
+        os.path.join(ws, "input"),
+        os.path.abspath("result"),
+        os.path.abspath("results"),
+        os.path.abspath(os.path.join("manga-image-translator", "result")),
+        os.path.abspath(os.path.join("manga-image-translator", "results")),
+    ]
+    for folder in possible_folders:
+        if os.path.exists(folder):
+            for f in os.listdir(folder):
+                if f.endswith("_translations.txt"):
+                    try: os.remove(os.path.join(folder, f))
+                    except: pass
+
     # =================================================================
     # 🔍 PHASE 1: OCR TEXT EXTRACTION FOR ALL PAGES (ONE GO)
     # =================================================================
@@ -182,12 +198,25 @@ async def main():
     await proc_p1.wait()
 
     # =================================================================
-    # 📝 COMPILE ALL EXTRACTED SUBTITLES INTO ONE CONSOLIDATED TXT
+    # 📝 SCAN ALL POSSIBLE PATHS AND COMPILE EXTRACTED SUBTITLES
     # =================================================================
-    translation_files = sorted([f for f in os.listdir(out) if f.endswith("_translations.txt")])
+    translation_files = []
+    source_folder = None
+
+    # Search dynamically through possible folders to catch where the engine outputs text files
+    for folder in possible_folders:
+        if os.path.exists(folder):
+            files = [f for f in os.listdir(folder) if f.endswith("_translations.txt")]
+            if files:
+                translation_files = sorted(files)
+                source_folder = folder
+                break
+
     if not translation_files:
-        await tg_bot.edit_message_text(CHAT_ID, MSG_ID, "❌ **Parsing Error:** No subtitles detected in any of the pages.")
+        await tg_bot.edit_message_text(CHAT_ID, MSG_ID, "❌ **Parsing Error:** No subtitles detected in any of the pages. Make sure the uploaded images contain readable text bubbles!")
         return await tg_bot.stop()
+
+    print(f"✅ Text files successfully located in: {source_folder}")
 
     page_to_file = {i: fname for i, fname in enumerate(translation_files, 1)}
     master_lines = []
@@ -196,7 +225,7 @@ async def main():
         base_name = fname.replace("_translations.txt", "")
         master_lines.append(f"[Page {page_idx:02d}: {base_name}]")
         
-        file_path = os.path.join(out, fname)
+        file_path = os.path.join(source_folder, fname)
         with open(file_path, "r", encoding="utf-8") as rf:
             content = rf.read()
             
@@ -253,7 +282,7 @@ async def main():
     while time.time() - start_time < timeout_duration:
         elapsed = int(time.time() - start_time)
         remaining = timeout_duration - elapsed
-        mins, secs = divmod(remaining, 60)
+        mins, secs = mod_val = divmod(remaining, 60)
         
         percent = int((elapsed / timeout_duration) * 100)
         bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
@@ -300,8 +329,8 @@ async def main():
     content_b64 = data_snapshot.get("content", "")
     txt_val = base64.b64decode(content_b64).decode('utf-8', errors='ignore')
     
-    # Parse tag values using robust regular expressions
-    pattern = rf"\{{(\d+)\}}tutty_(\d+)_(\d+)\((.*?)\)"
+    # Parse tag values using robust regular expressions (non f-string style)
+    pattern = r"\{\{\{(\d+)\}\}\}tutty_(\d+)_(\d+)\((.*?)\)"
     translations_map = {}
     
     for line in txt_val.splitlines():
@@ -311,9 +340,9 @@ async def main():
             _, p_idx, b_idx, text = match.groups()
             translations_map[(int(p_idx), int(b_idx))] = text.strip()
 
-    # Recreate the individual files in out_dir with newly mapped translations
+    # Recreate the individual files in source_folder with newly mapped translations
     for page_idx, fname in page_to_file.items():
-        file_path = os.path.join(out, fname)
+        file_path = os.path.join(source_folder, fname)
         with open(file_path, "r", encoding="utf-8") as rf:
             content = rf.read()
             
