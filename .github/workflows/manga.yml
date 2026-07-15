@@ -18,22 +18,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Cache Pip Packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Cache Manga Image Translator Repo & Models
-        id: manga-cache
+      - name: Cache Translator Workspace
+        id: workspace-cache
         uses: actions/cache@v4
         with:
           path: |
+            venv
             manga-image-translator
             ~/.cache/huggingface
-          key: ${{ runner.os }}-manga-translator-v1
+          key: ${{ runner.os }}-manga-workspace-v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,26 +40,31 @@ jobs:
 
       - name: Setup Translator
         run: |
-          if [ ! -d "manga-image-translator" ]; then
-            git clone https://github.com/zyddnys/manga-image-translator.git
-            cd manga-image-translator
-            git checkout $(git rev-list -n 1 --before="2024-03-01" HEAD)
-            cd ..
+          python -m venv venv
+          source venv/bin/activate
+          
+          # Only run full installation if workspace cache missed
+          if [ "${{ steps.workspace-cache.outputs.cache-hit }}" != "true" ]; then
+            echo "Cache missed! Installing dependencies from scratch..."
+            if [ ! -d "manga-image-translator" ]; then
+              git clone https://github.com/zyddnys/manga-image-translator.git
+              cd manga-image-translator
+              git checkout $(git rev-list -n 1 --before="2024-03-01" HEAD)
+              cd ..
+            fi
+            
+            # Clean requirements.txt to prevent bad pydensecrf overwrite
+            sed -i '/pydensecrf/d' manga-image-translator/requirements.txt || true
+            
+            pip install --no-cache-dir --upgrade pip
+            pip install --no-cache-dir Cython numpy setuptools wheel
+            pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+            pip install --no-cache-dir git+https://github.com/kodalli/pydensecrf.git
+            pip install -r manga-image-translator/requirements.txt
+            pip install pyrogram tgcrypto Pillow anyascii pymupdf requests psutil
+          else
+            echo "Cache hit! Virtual environment and models restored instantly."
           fi
-          
-          # Clean requirements.txt to prevent bad pydensecrf overwrite
-          sed -i '/pydensecrf/d' manga-image-translator/requirements.txt || true
-          
-          # Force CPU Acceleration Dependencies
-          pip install --no-cache-dir Cython numpy setuptools wheel
-          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          
-          # Install the stable, crash-free fork of pydensecrf for Python 3.10+
-          pip install --no-cache-dir git+https://github.com/kodalli/pydensecrf.git
-          
-          # Install rest of requirements safely
-          pip install -r manga-image-translator/requirements.txt
-          pip install pyrogram tgcrypto Pillow anyascii pymupdf requests psutil
 
       - name: Run Worker
         env:
@@ -83,4 +81,5 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          source venv/bin/activate
           python worker.py
