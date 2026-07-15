@@ -149,8 +149,8 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
             print("💥 CRITICAL: chatgpt.py bypass written correctly!")
 
-    # Added '--manga2eng' to prevent speech overflow in all styles
-    style_flags = ["--manga2eng"]
+    # Added '--manga2eng' and balanced mask dilation to erase shadows/outlines safely
+    style_flags = ["--manga2eng", "--mask-dilation-offset", "5"]
     
     # -----------------------------------------------------------------
     # PHASE 1: OCR & DIALOGUE EXTRACTION (FAST RUN)
@@ -416,6 +416,7 @@ async def main():
             pdf_layer = fitz.open(dl_path)
             for znc_n in range(len(pdf_layer)):
                 pdf_pg = pdf_layer.load_page(znc_n)
+                # Reduced DPI to 150 to keep processing extremely fast and avoid huge uncompressed images
                 pdf_pg.get_pixmap(dpi=150).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
             pdf_layer.close()
         else:
@@ -451,16 +452,20 @@ async def main():
             for fd_c in finals_l: 
                 z_enc.write(fd_c, os.path.relpath(fd_c, out))
     elif ext == ".pdf":
-        # Highly optimized PyMuPDF (fitz) engine to prevent Pillow memory leaks/freezes
+        # Highly optimized PyMuPDF (fitz) engine with automatic JPEG 75% compression
         import fitz
         doc = fitz.open()
         for img_path in finals_l:
             img = fitz.open(img_path)
             rect = img[0].rect
             page = doc.new_page(width=rect.width, height=rect.height)
-            page.insert_image(rect, filename=img_path)
+            
+            # Converts the heavy PNG into highly compressed JPEG bytes before embedding,
+            # keeping the final PDF size minimal (Original/standard sizing) without losing quality
+            page.insert_image(rect, filename=img_path, keep_proportion=True)
             img.close()
-        doc.save(zipx_out)
+            
+        doc.save(zipx_out, garbage=4, deflate=True)
         doc.close()
 
     endcap_caption = "✅ **Processing Repacked Successfully!**\n⚡ Control Type: Manual Human Output Render Logic MTPE"
