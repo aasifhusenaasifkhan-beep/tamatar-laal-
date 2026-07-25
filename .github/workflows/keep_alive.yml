@@ -1,0 +1,17 @@
+name: HuggingFace Space Keep Alive
+
+on:
+  schedule:
+    # Yeh cron har 50 minutes par execute hoga (Hugging Face ko sone nahi dega)
+    - cron: '*/50 * * * *'
+  workflow_dispatch: # Manual trigger support
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping HuggingFace Space Public Endpoint
+        run: |
+          # Neeche URL me "username" aur "space-name" ko apne Hugging Face details se badle
+          curl -I -s https://huggingface.co/spaces/YOUR_HF_USERNAME/YOUR_HF_SPACE_NAME
+          echo "HuggingFace Space pinged successfully to maintain runtime!"
