@@ -42,13 +42,11 @@ except ImportError:
 
 
 # =========================================================================================
-# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - COMPLETELY BYPASSES OPENAI/API VALIDATIONS
+# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - SYNCHRONOUS FLOW FIXED TO PREVENT CRASHES
 # ==========================================================================================
 
 ROUTINE_SCRIPT_BYPASSER = """
 import os
-import asyncio
-import time
 import json
 import base64
 import requests
@@ -86,13 +84,13 @@ class HumanInterventionTranslator(CommonTranslator):
     def supports_languages(self, from_lang, to_lang, fatal=False):
         return True
 
-    async def _translate(self, from_lang, to_lang, queries, *args, **kwargs):
-        return await self.do_custom_workflow(queries)
+    def _translate(self, from_lang, to_lang, queries, *args, **kwargs):
+        return self.do_custom_workflow(queries)
 
-    async def translate(self, from_lang, to_lang, queries, *args, **kwargs):
-        return await self.do_custom_workflow(queries)
+    def translate(self, from_lang, to_lang, queries, *args, **kwargs):
+        return self.do_custom_workflow(queries)
 
-    async def do_custom_workflow(self, queries):
+    def do_custom_workflow(self, queries):
         if not queries: 
             return queries
         
@@ -149,8 +147,16 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
             print("💥 CRITICAL: chatgpt.py bypass written correctly!")
 
-    # Added '--manga2eng' and balanced mask dilation to erase shadows/outlines safely
-    style_flags = ["--manga2eng", "--mask-dilation-offset", "5"]
+    # Speed-up and high precision bubble detection configuration
+    style_flags = [
+        "--manga2eng", 
+        "--mask-dilation-offset", "5",
+        "--detector", "ctd",                 # Comic Text Detector small bubbles ke liye [2.2.1]
+        "--detection-size", "2048",          # Badi resolution me detail detect karega
+        "--text-threshold", "0.25",          # Chote aur halkay text ko capture karne ke liye
+        "--box-threshold", "0.3",            # Multiple boxes ko overlap hone se bachayega
+        "--inpainting-size", "1024"          # Inpainting resize on CPU speed 4x badhane ke liye
+    ]
     
     # -----------------------------------------------------------------
     # PHASE 1: OCR & DIALOGUE EXTRACTION (FAST RUN)
@@ -416,8 +422,8 @@ async def main():
             pdf_layer = fitz.open(dl_path)
             for znc_n in range(len(pdf_layer)):
                 pdf_pg = pdf_layer.load_page(znc_n)
-                # Reduced DPI to 150 to keep processing extremely fast and avoid huge uncompressed images
-                pdf_pg.get_pixmap(dpi=150).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
+                # Reduced DPI to 120 to keep processing extremely fast and avoid huge uncompressed images
+                pdf_pg.get_pixmap(dpi=120).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
             pdf_layer.close()
         else:
             shutil.copy(dl_path, inp)
