@@ -10,10 +10,11 @@ on:
       lang: { required: true }
       style: { required: true }
       fname: { required: true }
+      mode: { required: true }  # extract or render mode
 
 jobs:
   translate:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2204  # Speed optimization using 4vCPU runner
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -26,7 +27,9 @@ jobs:
             venv
             manga-image-translator
             ~/.cache/huggingface
-          key: ${{ runner.os }}-manga-workspace-v4
+          key: ${{ runner.os }}-manga-workspace-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-manga-workspace-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,7 +46,7 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           
-          # Only run full installation if workspace cache missed
+          # Runs full installation if workspace cache is missed
           if [ "${{ steps.workspace-cache.outputs.cache-hit }}" != "true" ]; then
             echo "Cache missed! Installing dependencies from scratch..."
             if [ ! -d "manga-image-translator" ]; then
@@ -53,7 +56,6 @@ jobs:
               cd ..
             fi
             
-            # Clean requirements.txt to prevent bad pydensecrf overwrite
             sed -i '/pydensecrf/d' manga-image-translator/requirements.txt || true
             
             pip install --no-cache-dir --upgrade pip
@@ -75,6 +77,7 @@ jobs:
           LANG: ${{ github.event.inputs.lang }}
           STYLE: ${{ github.event.inputs.style }}
           FNAME: ${{ github.event.inputs.fname }}
+          MODE: ${{ github.event.inputs.mode }}
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
