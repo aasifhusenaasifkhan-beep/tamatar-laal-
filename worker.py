@@ -42,7 +42,7 @@ except ImportError:
 
 
 # =========================================================================================
-# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - SYNCHRONOUS FLOW FIXED TO PREVENT CRASHES
+# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - ABSOLUTE PATH TRACKING APPLIED
 # ==========================================================================================
 
 ROUTINE_SCRIPT_BYPASSER = """
@@ -70,7 +70,8 @@ class HumanInterventionTranslator(CommonTranslator):
         # Load translation map dynamically in render mode
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         if mode == "RENDER":
-            json_path = "../manga_workspace/translations.json"
+            workspace = os.environ.get("ENV_WORKSPACE", "../manga_workspace")
+            json_path = os.path.join(workspace, "translations.json")
             if os.path.exists(json_path):
                 try:
                     with open(json_path, "r", encoding="utf-8") as rf:
@@ -98,11 +99,13 @@ class HumanInterventionTranslator(CommonTranslator):
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         
         if mode == "EXTRACT":
-            # Save raw dialogues for compiling all pages later
-            os.makedirs("../manga_workspace", exist_ok=True)
-            page_file = f"../manga_workspace/page_{self.frame_counter}_queries.txt"
+            # Absolute workspace directory use karke reliable extraction path ensure kiya gaya hai
+            workspace = os.environ.get("ENV_WORKSPACE", "../manga_workspace")
+            os.makedirs(workspace, exist_ok=True)
+            page_file = os.path.join(workspace, f"page_{self.frame_counter}_queries.txt")
             with open(page_file, "w", encoding="utf-8") as wf:
-                wf.write("\\n".join(queries))
+                for q in queries:
+                    wf.write(str(q) + "\\n")
             return queries
             
         elif mode == "RENDER":
@@ -138,6 +141,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     os.environ["ENV_MSG_ID"] = str(MSG_ID)
     os.environ["ENV_REPO_NAME"] = str(REPO_NAME)
     os.environ["ENV_GITHUB_TOKEN"] = os.getenv("GITHUB_TOKEN", "").strip()
+    os.environ["ENV_WORKSPACE"] = ws  # Bypasser ko absolute path dene ke liye
 
     # Overwrite 'chatgpt.py' because library uses it internally
     if cwd_dir:
@@ -191,7 +195,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 speed_str += f" ({1/speed:.1f} sec/page)"
                 
             status_text = (
-                f"🔍 **Phase 1/3: Extracting speech frames (OCR)**\n"
+                f"🔍 **Phase 1/3: Extracting speech bubbles (OCR)**\n"
                 f"Analyzing page structures to map dialogue bubbles...\n\n"
                 f"**Extraction Progress:** Page `{current_page}` of `{len(pages)}` finished.\n"
                 f"**Speed:** `{speed_str}` | **Percentage:** `{percent}%`\n"
@@ -213,9 +217,9 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
             with open(page_file, "r", encoding="utf-8") as rf:
                 queries = rf.read().splitlines()
             for idx, q in enumerate(queries, 1):
-                # Clean Tag formatting with single braces to strictly avoid parsing offsets
-                master_lines.append(f"{idx}")
-                master_lines.append(f"{{{USER_ID}}}tutty_{i}_{idx} ==> {q}\n")
+                if q.strip():
+                    master_lines.append(f"{idx}")
+                    master_lines.append(f"{{{USER_ID}}}tutty_{i}_{idx} ==> {q}\n")
             master_lines.append("")
         else:
             # Safe boundary check to stop parsing when frame files end
@@ -413,6 +417,9 @@ async def main():
     os.makedirs(inp, exist_ok=True)
     os.makedirs(out, exist_ok=True)
 
+    # Absolute workspace directory expose
+    os.environ["ENV_WORKSPACE"] = ws
+
     try:
         if ext in [".zip", ".cbz"]:
             with zipfile.ZipFile(dl_path, 'r') as z: 
@@ -465,9 +472,6 @@ async def main():
             img = fitz.open(img_path)
             rect = img[0].rect
             page = doc.new_page(width=rect.width, height=rect.height)
-            
-            # Converts the heavy PNG into highly compressed JPEG bytes before embedding,
-            # keeping the final PDF size minimal (Original/standard sizing) without losing quality
             page.insert_image(rect, filename=img_path, keep_proportion=True)
             img.close()
             
