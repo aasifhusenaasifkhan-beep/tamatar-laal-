@@ -153,15 +153,12 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
             with open(core_lib_node, "w", encoding="utf-8") as injectn:
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
 
+    # Restored EXACT original working parameters to avoid unrecognized arguments errors
     style_flags = [
-        "--detector", "default",              # High-stability default detector (Zero CPU/PyTorch CUDA crashes)
-        "--ocr", "48px",                      # Clean text reading
-        "--inpainter", "lama_large",          # Seamless background clearing (No brush marks)
-        "--renderer", "manga2eng",            # Automated fitting
-        "--unclip-ratio", "1.5",              # Generous margin fitting
-        "--mask-dilation-offset", "10",       # Complete edges clearing
-        "--text-threshold", "0.35",
-        "--box-threshold", "0.45"
+        "--manga2eng", 
+        "--mask-dilation-offset", "5",
+        "--text-threshold", "0.4",
+        "--box-threshold", "0.5"
     ]
     
     pages = sorted([os.path.join(r, f) for r, _, fs in os.walk(input_dir) for f in fs if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp'))])
@@ -205,7 +202,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                     
         await proc.wait()
 
-        # Catching core program failures
+        # Catching core program failures and logging them
         if proc.returncode != 0:
             err_log = "\n".join(logs_list[-10:])
             return False, "Failed", f"OCR process failed with exit code {proc.returncode}.\nLogs:\n{err_log}"
@@ -322,7 +319,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                     
         await proc2.wait()
 
-        # Catching core program failures
+        # Catching core program failures and logging them
         if proc2.returncode != 0:
             err_log2 = "\n".join(logs_list2[-10:])
             return False, "Failed", f"Render process failed with exit code {proc2.returncode}.\nLogs:\n{err_log2}"
