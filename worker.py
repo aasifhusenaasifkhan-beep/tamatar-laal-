@@ -41,7 +41,7 @@ try:
 except ImportError:
     pass
 
-# Dynamic Bypass for OCR and Render Translation Map (Stateless & File-based Tracker)
+# Dynamic Bypass for OCR and Render Translation Map (Supports string & tuple keys with global counter)
 ROUTINE_SCRIPT_BYPASSER = r"""
 import os
 import asyncio
@@ -52,6 +52,8 @@ import requests
 from .common import CommonTranslator
 
 class HumanInterventionTranslator(CommonTranslator):
+    _global_frame_counter = 0  # Process-level persistent counter
+    
     supported_src_languages = ['auto', 'ENG', 'JPN', 'CHS', 'CHT', 'KOR', 'FRA', 'DEU', 'RUS', 'SPA', 'ITA', 'POR', 'TRK', 'VIE', 'NLD', 'PLK', 'UKR', 'ARA', 'THA', 'IND', 'FIL']
     supported_target_languages = ['auto', 'ENG', 'JPN', 'CHS', 'CHT', 'KOR', 'FRA', 'DEU', 'RUS', 'SPA', 'ITA', 'POR', 'TRK', 'VIE', 'NLD', 'PLK', 'UKR', 'ARA', 'THA', 'IND', 'FIL']
 
@@ -65,17 +67,22 @@ class HumanInterventionTranslator(CommonTranslator):
         self.repo_name = os.environ.get("ENV_REPO_NAME", "")
         self.translations_map = {}
         
-        # Load translation map dynamically in render mode
+        # Load translation map dynamically in render mode using absolute environment path
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         if mode == "RENDER":
-            json_path = "../manga_workspace/translations.json"
-            if os.path.exists(json_path):
+            json_path = os.environ.get("ENV_TRANSLATIONS_JSON")
+            if json_path and os.path.exists(json_path):
                 try:
                     with open(json_path, "r", encoding="utf-8") as rf:
                         data = json.load(rf)
                         for k, v in data.items():
                             p_idx, b_idx = k.split("_", 1)
-                            self.translations_map[(int(p_idx), b_idx.strip())] = v
+                            p_idx_int = int(p_idx)
+                            b_idx_str = b_idx.strip()
+                            
+                            # Dual-mapping storage to prevent data-type lookup mismatch
+                            self.translations_map[(p_idx_int, b_idx_str)] = v
+                            self.translations_map[f"{p_idx_int}_{b_idx_str}"] = v
                 except Exception as e:
                     print("Error loading translation JSON in bypasser:", e)
 
@@ -95,38 +102,28 @@ class HumanInterventionTranslator(CommonTranslator):
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         
         if mode == "EXTRACT":
+            HumanInterventionTranslator._global_frame_counter += 1
+            current_page = HumanInterventionTranslator._global_frame_counter
+            
             os.makedirs("../manga_workspace", exist_ok=True)
-            # Find the next available index dynamically by scanning existing sequential query files
-            existing_indices = []
-            for f in os.listdir("../manga_workspace"):
-                if f.startswith("page_") and f.endswith("_queries.txt"):
-                    try:
-                        idx = int(f.split("_")[1])
-                        existing_indices.append(idx)
-                    except:
-                        pass
-            next_idx = max(existing_indices) + 1 if existing_indices else 1
-            page_file = f"../manga_workspace/page_{next_idx}_queries.txt"
+            page_file = f"../manga_workspace/page_{current_page}_queries.txt"
             with open(page_file, "w", encoding="utf-8") as wf:
                 wf.write("\n".join(queries))
             return queries
             
         elif mode == "RENDER":
-            # Tracking currently rendered page index statelessly
-            render_count_file = "../manga_workspace/render_count.txt"
-            if not os.path.exists(render_count_file):
-                current_render_page = 1
-            else:
-                with open(render_count_file, "r") as rf:
-                    try: current_render_page = int(rf.read().strip()) + 1
-                    except: current_render_page = 1
-            with open(render_count_file, "w") as wf:
-                wf.write(str(current_render_page))
-
+            HumanInterventionTranslator._global_frame_counter += 1
+            current_page = HumanInterventionTranslator._global_frame_counter
+            
             translated_layer_dump = []
             for idx, qrs in enumerate(queries, 1):
-                key = f"{current_render_page}_{idx}"
-                translated_text = self.translations_map.get(key, qrs)
+                key_tuple = (current_page, str(idx))
+                key_str = f"{current_page}_{idx}"
+                
+                # Check mapping with both dynamic key formats
+                translated_text = self.translations_map.get(key_tuple)
+                if translated_text is None:
+                    translated_text = self.translations_map.get(key_str, qrs)
                 translated_layer_dump.append(translated_text)
             return translated_layer_dump
 
@@ -153,7 +150,6 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
             with open(core_lib_node, "w", encoding="utf-8") as injectn:
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
 
-    # Restored EXACT original working parameters to avoid unrecognized arguments errors
     style_flags = [
         "--manga2eng", 
         "--mask-dilation-offset", "5",
@@ -280,8 +276,12 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                     _, p_idx, b_idx, text = match.groups()
                     translations[f"{p_idx}_{b_idx}"] = text.strip()
                     
-            with open(os.path.join(ws, "translations.json"), "w", encoding="utf-8") as wf:
+            translations_json_path = os.path.join(ws, "translations.json")
+            with open(translations_json_path, "w", encoding="utf-8") as wf:
                 json.dump(translations, wf, ensure_ascii=False, indent=4)
+                
+            # Set absolute path in environment for bypasser lookup reliability
+            os.environ["ENV_TRANSLATIONS_JSON"] = translations_json_path
         else:
             return False, "Failed", f"Missing translation file: {trans_file_path}"
 
@@ -443,7 +443,8 @@ async def main():
                 with Image.open(img_path) as pil_img:
                     width, height = pil_img.size
                     temp_jpg = img_path + ".jpg"
-                    pil_img.convert("RGB").save(temp_jpg, "JPEG", quality=75)
+                    # Compresses to 50% quality with optimization to drastically shrink output PDF size
+                    pil_img.convert("RGB").save(temp_jpg, "JPEG", quality=50, optimize=True)
                 
                 page = doc.new_page(width=width, height=height)
                 page.insert_image(page.rect, filename=temp_jpg, keep_proportion=True)
