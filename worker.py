@@ -42,7 +42,7 @@ except ImportError:
 
 
 # =========================================================================================
-# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - COMPLETELY BYPASSES OPENAI/API VALIDATIONS (ORIGINAL ASYNC)
+# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - COMPLETELY BYPASSES OPENAI/API VALIDATIONS
 # ==========================================================================================
 
 ROUTINE_SCRIPT_BYPASSER = """
@@ -149,12 +149,12 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
             print("💥 CRITICAL: chatgpt.py bypass written correctly!")
 
-    # Original layout with optimized thresholds for small and multiple bubbles
+    # Balanced thresholds to capture small and multiple bubbles cleanly
     style_flags = [
         "--manga2eng", 
         "--mask-dilation-offset", "5",
-        "--text-threshold", "0.4",      # Chote aur ek page par jyada bubbles ko capture karne ke liye [2.3.6]
-        "--box-threshold", "0.5"        # Chote blocks ki precision detection ke liye
+        "--text-threshold", "0.4",
+        "--box-threshold", "0.5"
     ]
     
     # -----------------------------------------------------------------
@@ -451,43 +451,50 @@ async def main():
 
     await tg_bot.edit_message_text(CHAT_ID, MSG_ID, get_progress_bar(90, "Rebuilding completed typesetting output..."))
 
-    finals_l = sorted([os.path.join(r, f) for r, _, fs in os.walk(out) for f in fs if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))])
-    zipx_out = "translated_" + FNAME if ext in [".zip", ".cbz", ".pdf"] else finals_l[0]
-    
-    if ext in [".zip", ".cbz"]:
-        with zipfile.ZipFile(zipx_out, 'w', zipfile.ZIP_DEFLATED) as z_enc:
-            for fd_c in finals_l: 
-                z_enc.write(fd_c, os.path.relpath(fd_c, out))
-    elif ext == ".pdf":
-        import fitz
-        from PIL import Image
-        doc = fitz.open()
-        for img_path in finals_l:
-            img = fitz.open(img_path)
-            rect = img[0].rect
-            page = doc.new_page(width=rect.width, height=rect.height)
-            
-            # Heavy PNGs ko dynamically high-compression JPEG (75% quality) me convert karke insert kiya hai
-            # jisse final PDF size bilkul minimal aur optimized ho jayega
-            temp_jpg = img_path + ".jpg"
-            with Image.open(img_path) as pil_img:
-                pil_img.convert("RGB").save(temp_jpg, "JPEG", quality=75)
-            
-            page.insert_image(rect, filename=temp_jpg, keep_proportion=True)
-            img.close()
-            try: os.remove(temp_jpg)
-            except: pass
-            
-        doc.save(zipx_out, garbage=4, deflate=True)
-        doc.close()
-
-    endcap_caption = "✅ **Processing Repacked Successfully!**\n⚡ Control Type: Manual Human Output Render Logic MTPE"
-    
+    # Failsafe Try-except wrapper for 90% rebuilding block to strictly avoid freeze
     try:
+        finals_l = sorted([os.path.join(r, f) for r, _, fs in os.walk(out) for f in fs if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))])
+        if not finals_l:
+            raise ValueError("Rendering phase compiled but no output images found.")
+
+        zipx_out = "translated_" + FNAME if ext in [".zip", ".cbz", ".pdf"] else finals_l[0]
+        
+        if ext in [".zip", ".cbz"]:
+            with zipfile.ZipFile(zipx_out, 'w', zipfile.ZIP_DEFLATED) as z_enc:
+                for fd_c in finals_l: 
+                    z_enc.write(fd_c, os.path.relpath(fd_c, out))
+        elif ext == ".pdf":
+            import fitz
+            from PIL import Image
+            doc = fitz.open()
+            for img_path in finals_l:
+                # Safe PIL resolution reader (Failsafe & direct dimensions extraction)
+                with Image.open(img_path) as pil_img:
+                    width, height = pil_img.size
+                    
+                    # 75% quality JPEG automatic compression to dramatically reduce output PDF size
+                    temp_jpg = img_path + ".jpg"
+                    pil_img.convert("RGB").save(temp_jpg, "JPEG", quality=75)
+                
+                # New fitz document page mapping
+                page = doc.new_page(width=width, height=height)
+                page.insert_image(page.rect, filename=temp_jpg, keep_proportion=True)
+                
+                try: os.remove(temp_jpg)
+                except: pass
+                
+            doc.save(zipx_out, garbage=4, deflate=True)
+            doc.close()
+
+        endcap_caption = "✅ **Processing Repacked Successfully!**\n⚡ Control Type: Manual Human Output Render Logic MTPE"
+        
         await tg_bot.send_document(CHAT_ID, zipx_out, caption=endcap_caption)
         await tg_bot.delete_messages(CHAT_ID, MSG_ID)
+
     except Exception as e:
-        print("Failed to deliver final document:", e)
+        err_msg = f"❌ **Rebuild Error at 90%:** `{e}`"
+        print(err_msg)
+        await tg_bot.edit_message_text(CHAT_ID, MSG_ID, err_msg)
 
     # Post cleanup of local temporary variables
     shutil.rmtree(ws, ignore_errors=True)
