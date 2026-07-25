@@ -14,7 +14,7 @@ on:
 
 jobs:
   translate:
-    runs-on: blacksmith-4vcpu-ubuntu-2204  # Speed optimization using 4vCPU runner
+    runs-on: ubuntu-latest  # Standard free GitHub runner
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
