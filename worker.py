@@ -41,8 +41,8 @@ try:
 except ImportError:
     pass
 
-# Dynamic Bypass for OCR and Render Translation Map
-ROUTINE_SCRIPT_BYPASSER = """
+# Dynamic Bypass for OCR and Render Translation Map (Stateless & File-based Tracker)
+ROUTINE_SCRIPT_BYPASSER = r"""
 import os
 import asyncio
 import time
@@ -57,9 +57,15 @@ class HumanInterventionTranslator(CommonTranslator):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.frame_counter = 0
+        self.sys_token = os.environ.get("ENV_BOT_TOKEN")
+        self.git_token = os.environ.get("ENV_GITHUB_TOKEN")
+        self.cst_uid = int(os.environ.get("ENV_USER_ID", "0"))
+        self.chat_id = int(os.environ.get("ENV_CHAT_ID", "0"))
+        self.msg_id = int(os.environ.get("ENV_MSG_ID", "0"))
+        self.repo_name = os.environ.get("ENV_REPO_NAME", "")
         self.translations_map = {}
         
+        # Load translation map dynamically in render mode
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         if mode == "RENDER":
             json_path = "../manga_workspace/translations.json"
@@ -86,24 +92,45 @@ class HumanInterventionTranslator(CommonTranslator):
         if not queries: 
             return queries
         
-        self.frame_counter += 1
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         
         if mode == "EXTRACT":
             os.makedirs("../manga_workspace", exist_ok=True)
-            page_file = f"../manga_workspace/page_{self.frame_counter}_queries.txt"
+            # Find the next available index dynamically by scanning existing sequential query files
+            existing_indices = []
+            for f in os.listdir("../manga_workspace"):
+                if f.startswith("page_") and f.endswith("_queries.txt"):
+                    try:
+                        idx = int(f.split("_")[1])
+                        existing_indices.append(idx)
+                    except:
+                        pass
+            next_idx = max(existing_indices) + 1 if existing_indices else 1
+            page_file = f"../manga_workspace/page_{next_idx}_queries.txt"
             with open(page_file, "w", encoding="utf-8") as wf:
-                wf.write("\\n".join(queries))
+                wf.write("\n".join(queries))
             return queries
             
         elif mode == "RENDER":
+            # Tracking currently rendered page index statelessly
+            render_count_file = "../manga_workspace/render_count.txt"
+            if not os.path.exists(render_count_file):
+                current_render_page = 1
+            else:
+                with open(render_count_file, "r") as rf:
+                    try: current_render_page = int(rf.read().strip()) + 1
+                    except: current_render_page = 1
+            with open(render_count_file, "w") as wf:
+                wf.write(str(current_render_page))
+
             translated_layer_dump = []
             for idx, qrs in enumerate(queries, 1):
-                key = (self.frame_counter, str(idx))
+                key = f"{current_render_page}_{idx}"
                 translated_text = self.translations_map.get(key, qrs)
                 translated_layer_dump.append(translated_text)
             return translated_layer_dump
 
+# Mapping all possible classes
 class ChatGPTTranslator(HumanInterventionTranslator): pass
 class ChatGPT2StageTranslator(HumanInterventionTranslator): pass
 class GPT3Translator(HumanInterventionTranslator): pass
@@ -127,7 +154,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
 
     style_flags = [
-        "--detector", "ctd",                  # No missing bubbles (Comic Text Detector)
+        "--detector", "default",              # High-stability default detector (Zero CPU/PyTorch CUDA crashes)
         "--ocr", "48px",                      # Clean text reading
         "--inpainter", "lama_large",          # Seamless background clearing (No brush marks)
         "--renderer", "manga2eng",            # Automated fitting
@@ -151,11 +178,13 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
         
         current_page = 0
         start_time = time.time()
+        logs_list = []
         
         while True:
             line = await proc.stdout.readline()
             if not line: break
             decoded = line.decode('utf-8', errors='ignore').strip()
+            logs_list.append(decoded)
             
             if "Translating:" in decoded:
                 current_page += 1
@@ -176,7 +205,12 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                     
         await proc.wait()
 
-        # Compile Master file with commented metadata header at the very top
+        # Catching core program failures
+        if proc.returncode != 0:
+            err_log = "\n".join(logs_list[-10:])
+            return False, "Failed", f"OCR process failed with exit code {proc.returncode}.\nLogs:\n{err_log}"
+
+        # Compile Master file with metadata header at the very top
         master_lines = []
         metadata = {
             "file_id": FILE_ID,
@@ -235,7 +269,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
     elif mode == "render":
         os.environ["ENV_TRANSLATE_MODE"] = "RENDER"
         
-        # Load user translations from local git workspace path
+        # Load user translations from local workspace path
         trans_file_path = f"trans_{USER_ID}.txt"
         translations = {}
         if os.path.exists(trans_file_path):
@@ -261,11 +295,13 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
         
         current_render_page = 0
         start_render_time = time.time()
+        logs_list2 = []
         
         while True:
             line = await proc2.stdout.readline()
             if not line: break
             decoded = line.decode('utf-8', errors='ignore').strip()
+            logs_list2.append(decoded)
             
             if "Translating:" in decoded:
                 current_render_page += 1
@@ -285,6 +321,11 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client, mo
                 except: pass
                     
         await proc2.wait()
+
+        # Catching core program failures
+        if proc2.returncode != 0:
+            err_log2 = "\n".join(logs_list2[-10:])
+            return False, "Failed", f"Render process failed with exit code {proc2.returncode}.\nLogs:\n{err_log2}"
         
         cnt_results = 0
         if os.path.exists(output_dir):
