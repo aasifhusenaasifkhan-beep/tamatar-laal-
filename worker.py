@@ -42,7 +42,7 @@ except ImportError:
 
 
 # =========================================================================================
-# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - ORIGINAL ASYNC STRUCTURE RESTORED
+# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - COMPLETELY BYPASSES OPENAI/API VALIDATIONS (ORIGINAL ASYNC)
 # ==========================================================================================
 
 ROUTINE_SCRIPT_BYPASSER = """
@@ -149,13 +149,12 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 injectn.write(ROUTINE_SCRIPT_BYPASSER)
             print("💥 CRITICAL: chatgpt.py bypass written correctly!")
 
-    # Speed-up and high precision bubble detection configuration
+    # Original layout with optimized thresholds for small and multiple bubbles
     style_flags = [
         "--manga2eng", 
         "--mask-dilation-offset", "5",
-        "--detector", "ctd",                 # Small & multiple bubbles detect karne ke liye detector
-        "--detection-size", "1536",          # Higher precision text extraction
-        "--inpainting-size", "1024"          # CPU speed fast karne ke liye inpainting optimization
+        "--text-threshold", "0.4",      # Chote aur ek page par jyada bubbles ko capture karne ke liye [2.3.6]
+        "--box-threshold", "0.5"        # Chote blocks ki precision detection ke liye
     ]
     
     # -----------------------------------------------------------------
@@ -191,7 +190,7 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
                 speed_str += f" ({1/speed:.1f} sec/page)"
                 
             status_text = (
-                f"🔍 **Phase 1/3: Extracting speech bubbles (OCR)**\n"
+                f"🔍 **Phase 1/3: Extracting speech frames (OCR)**\n"
                 f"Analyzing page structures to map dialogue bubbles...\n\n"
                 f"**Extraction Progress:** Page `{current_page}` of `{len(pages)}` finished.\n"
                 f"**Speed:** `{speed_str}` | **Percentage:** `{percent}%`\n"
@@ -421,8 +420,8 @@ async def main():
             pdf_layer = fitz.open(dl_path)
             for znc_n in range(len(pdf_layer)):
                 pdf_pg = pdf_layer.load_page(znc_n)
-                # Reduced DPI to 120 to keep processing extremely fast and avoid huge uncompressed images
-                pdf_pg.get_pixmap(dpi=120).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
+                # Reduced DPI to 150 to keep processing extremely fast and avoid huge uncompressed images
+                pdf_pg.get_pixmap(dpi=150).save(os.path.join(inp, f"page_{znc_n:03d}.png"))
             pdf_layer.close()
         else:
             shutil.copy(dl_path, inp)
@@ -439,7 +438,7 @@ async def main():
 
     if not success_bool:
         if prvd_ui == "Timeout":
-            err_out = "❌ **Timeout:** Task cancelled. Aapne 10 minute ke andar translation file vapas upload nahi ki."
+            err_out = "❌ **Timeout:** Task cancelled. Aapne 10 minute ke andar translation file submit nahi ki."
         else:
             err_out = (
                 f"❌ **FATAL SYSTEM FAIL / DENIAL LOOP**\n"
@@ -460,15 +459,24 @@ async def main():
             for fd_c in finals_l: 
                 z_enc.write(fd_c, os.path.relpath(fd_c, out))
     elif ext == ".pdf":
-        # Highly optimized PyMuPDF (fitz) engine with automatic JPEG 75% compression
         import fitz
+        from PIL import Image
         doc = fitz.open()
         for img_path in finals_l:
             img = fitz.open(img_path)
             rect = img[0].rect
             page = doc.new_page(width=rect.width, height=rect.height)
-            page.insert_image(rect, filename=img_path, keep_proportion=True)
+            
+            # Heavy PNGs ko dynamically high-compression JPEG (75% quality) me convert karke insert kiya hai
+            # jisse final PDF size bilkul minimal aur optimized ho jayega
+            temp_jpg = img_path + ".jpg"
+            with Image.open(img_path) as pil_img:
+                pil_img.convert("RGB").save(temp_jpg, "JPEG", quality=75)
+            
+            page.insert_image(rect, filename=temp_jpg, keep_proportion=True)
             img.close()
+            try: os.remove(temp_jpg)
+            except: pass
             
         doc.save(zipx_out, garbage=4, deflate=True)
         doc.close()
