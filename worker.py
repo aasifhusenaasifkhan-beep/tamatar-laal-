@@ -42,11 +42,13 @@ except ImportError:
 
 
 # =========================================================================================
-# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - ABSOLUTE PATH TRACKING APPLIED
+# 🧬 DYNAMIC OVERWRITE FOR 'chatgpt.py' - ORIGINAL ASYNC STRUCTURE RESTORED
 # ==========================================================================================
 
 ROUTINE_SCRIPT_BYPASSER = """
 import os
+import asyncio
+import time
 import json
 import base64
 import requests
@@ -70,8 +72,7 @@ class HumanInterventionTranslator(CommonTranslator):
         # Load translation map dynamically in render mode
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         if mode == "RENDER":
-            workspace = os.environ.get("ENV_WORKSPACE", "../manga_workspace")
-            json_path = os.path.join(workspace, "translations.json")
+            json_path = "../manga_workspace/translations.json"
             if os.path.exists(json_path):
                 try:
                     with open(json_path, "r", encoding="utf-8") as rf:
@@ -85,13 +86,13 @@ class HumanInterventionTranslator(CommonTranslator):
     def supports_languages(self, from_lang, to_lang, fatal=False):
         return True
 
-    def _translate(self, from_lang, to_lang, queries, *args, **kwargs):
-        return self.do_custom_workflow(queries)
+    async def _translate(self, from_lang, to_lang, queries, *args, **kwargs):
+        return await self.do_custom_workflow(queries)
 
-    def translate(self, from_lang, to_lang, queries, *args, **kwargs):
-        return self.do_custom_workflow(queries)
+    async def translate(self, from_lang, to_lang, queries, *args, **kwargs):
+        return await self.do_custom_workflow(queries)
 
-    def do_custom_workflow(self, queries):
+    async def do_custom_workflow(self, queries):
         if not queries: 
             return queries
         
@@ -99,13 +100,11 @@ class HumanInterventionTranslator(CommonTranslator):
         mode = os.environ.get("ENV_TRANSLATE_MODE", "EXTRACT")
         
         if mode == "EXTRACT":
-            # Absolute workspace directory use karke reliable extraction path ensure kiya gaya hai
-            workspace = os.environ.get("ENV_WORKSPACE", "../manga_workspace")
-            os.makedirs(workspace, exist_ok=True)
-            page_file = os.path.join(workspace, f"page_{self.frame_counter}_queries.txt")
+            # Save raw dialogues for compiling all pages later
+            os.makedirs("../manga_workspace", exist_ok=True)
+            page_file = f"../manga_workspace/page_{self.frame_counter}_queries.txt"
             with open(page_file, "w", encoding="utf-8") as wf:
-                for q in queries:
-                    wf.write(str(q) + "\\n")
+                wf.write("\\n".join(queries))
             return queries
             
         elif mode == "RENDER":
@@ -141,7 +140,6 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     os.environ["ENV_MSG_ID"] = str(MSG_ID)
     os.environ["ENV_REPO_NAME"] = str(REPO_NAME)
     os.environ["ENV_GITHUB_TOKEN"] = os.getenv("GITHUB_TOKEN", "").strip()
-    os.environ["ENV_WORKSPACE"] = ws  # Bypasser ko absolute path dene ke liye
 
     # Overwrite 'chatgpt.py' because library uses it internally
     if cwd_dir:
@@ -155,11 +153,9 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
     style_flags = [
         "--manga2eng", 
         "--mask-dilation-offset", "5",
-        "--detector", "ctd",                 # Comic Text Detector small bubbles ke liye [2.2.1]
-        "--detection-size", "2048",          # Badi resolution me detail detect karega
-        "--text-threshold", "0.25",          # Chote aur halkay text ko capture karne ke liye
-        "--box-threshold", "0.3",            # Multiple boxes ko overlap hone se bachayega
-        "--inpainting-size", "1024"          # Inpainting resize on CPU speed 4x badhane ke liye
+        "--detector", "ctd",                 # Small & multiple bubbles detect karne ke liye detector
+        "--detection-size", "1536",          # Higher precision text extraction
+        "--inpainting-size", "1024"          # CPU speed fast karne ke liye inpainting optimization
     ]
     
     # -----------------------------------------------------------------
@@ -217,9 +213,9 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
             with open(page_file, "r", encoding="utf-8") as rf:
                 queries = rf.read().splitlines()
             for idx, q in enumerate(queries, 1):
-                if q.strip():
-                    master_lines.append(f"{idx}")
-                    master_lines.append(f"{{{USER_ID}}}tutty_{i}_{idx} ==> {q}\n")
+                # Clean Tag formatting with single braces to strictly avoid parsing offsets
+                master_lines.append(f"{idx}")
+                master_lines.append(f"{{{USER_ID}}}tutty_{i}_{idx} ==> {q}\n")
             master_lines.append("")
         else:
             # Safe boundary check to stop parsing when frame files end
@@ -314,7 +310,6 @@ async def run_translator_with_fallback(input_dir, output_dir, ws, bot_client):
         await asyncio.sleep(10)
 
     if not user_uploaded:
-        await bot_client.edit_message_text(CHAT_ID, MSG_ID, "❌ **Timeout:** Task cancelled. Cache has been cleared.")
         return False, "Timeout", ""
 
     # -----------------------------------------------------------------
@@ -417,9 +412,6 @@ async def main():
     os.makedirs(inp, exist_ok=True)
     os.makedirs(out, exist_ok=True)
 
-    # Absolute workspace directory expose
-    os.environ["ENV_WORKSPACE"] = ws
-
     try:
         if ext in [".zip", ".cbz"]:
             with zipfile.ZipFile(dl_path, 'r') as z: 
@@ -446,12 +438,15 @@ async def main():
     success_bool, prvd_ui, full_core_log = await run_translator_with_fallback(inp, out, ws, tg_bot)
 
     if not success_bool:
-        err_out = (
-            f"❌ **FATAL SYSTEM FAIL / DENIAL LOOP**\n"
-            f"Processes crashed during generation blocks.\n\n"
-            f"**Error Diagnostics:**\n"
-            f"`{full_core_log[-450:]}`"
-        )
+        if prvd_ui == "Timeout":
+            err_out = "❌ **Timeout:** Task cancelled. Aapne 10 minute ke andar translation file vapas upload nahi ki."
+        else:
+            err_out = (
+                f"❌ **FATAL SYSTEM FAIL / DENIAL LOOP**\n"
+                f"Processes crashed during generation blocks.\n\n"
+                f"**Error Diagnostics:**\n"
+                f"`{full_core_log[-450:]}`"
+            )
         await tg_bot.edit_message_text(CHAT_ID, MSG_ID, err_out)
         return await tg_bot.stop()
 
